@@ -313,7 +313,7 @@ def format_url(url_template: str, param_args: ArgPairs) -> str:
         def replace_url_param(_):
             nonlocal matched
             matched = True
-            return arg_value
+            return str(arg_value)
 
         returned_url = re.sub(r'\{%s\}' % arg_name, replace_url_param, returned_url)
 

@@ -2,7 +2,7 @@
 
 function _carl {
 	local line
-	_arguments -C '-X:method:(GET POST PUT DELETE PATCH)' '1:url:{_carl_url}' '*::parameter:{_carl_parameters}'
+	_arguments -C '-X:method:(GET POST PUT DELETE PATCH)' '1:url:{_carl_url}' '*::parameter:{_carl_params}'
 	# echo
 	# echo context=$context state=$state state_descr=$state_descr line=$line
 	# sleep 5
@@ -13,18 +13,24 @@ function _carl_utils {
 }
 
 function _carl_url {
-	url=$(bash -c 'echo '$line[1])
-	
 	_values url $(_carl_utils urls $opt_args[-X] | sed 's/:/\\:/g')
 }
 
-function _carl_parameters {
-	local url param_args
+function _carl_params {
+	local url param_args arguments
 	
 	url=$(bash -c 'echo '$line[1])
 	if [[ $opt_args[-X] ]]; then
 		param_args=(-X $opt_args[-X])
 	fi
 
-	_arguments $(_carl_utils params  "$param_args[@]" --format '+{param}:value' "$(printf '%b' $url)")
+	eval "arguments=($(_carl_utils params  "$param_args[@]" --format '+{param}:value:{{_carl_param_values\ {param}}}' "$(printf '%b' $url)"))"
+	_arguments $arguments
+}
+
+function _carl_param_values {
+	local values param
+	param=$1
+	eval "values=($(_carl_utils param-values -f '{quoted_value}' $param))"
+	_values value $values 
 }
