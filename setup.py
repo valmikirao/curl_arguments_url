@@ -10,7 +10,10 @@ with open('README.rst') as readme_file:
 with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
-requirements = [ ]
+requirements = [
+    'diskcache==5.4.0',
+    'PyYAML==6.0'
+]
 
 setup_requirements = ['pytest-runner', ]
 
@@ -32,6 +35,7 @@ setup(
     entry_points={
         'console_scripts': [
             'carl=curl_arguments_url.cli:main',
+            'click-test=curl_arguments_url.click_test:main'
         ],
     },
     install_requires=requirements,

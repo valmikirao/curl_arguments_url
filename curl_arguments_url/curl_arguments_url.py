@@ -9,6 +9,8 @@ from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Opt
     Set
 from urllib.parse import urlencode
 import traceback
+
+import click
 from diskcache import Cache
 import yaml
 
@@ -43,7 +45,8 @@ TYPES: Dict[str, ArgType] = {
     'string': str,
     'integer': int,
     'number': float,
-    'boolean': lambda val: val == 'true',
+    # give True for 't' 'True' 'true' 'tr', etc
+    'boolean': lambda val: val != '' and 'true'.startswith(val.lower()),
 }
 
 
@@ -189,7 +192,10 @@ class SwaggerRepo:
 
         for swagger_data_ in multi_swagger_data:
             base_path = swagger_data_['basePath']
-            self._models = self.models_from_data(swagger_data_['models'])
+            if 'models' in swagger_data_:
+                self._models = self.models_from_data(swagger_data_['models'])
+            else:
+                self._models = {}
             for api in swagger_data_['apis']:
                 endpoint_url = base_path + api['path']
                 for op in api['operations']:
@@ -370,6 +376,15 @@ def add_args_from_params(parser: argparse.ArgumentParser, endpoint: SwaggerEndpo
 
 
 def parse_generic_args(cli_args: Sequence[str]) -> Tuple[argparse.Namespace, Sequence[str]]:
+    @click.command()
+    @click.argument('url')
+    @click.option('-X', '--method', type=click.Choice(METHODS), default='GET')
+    @click.option('-p', '--print-cmd', is_flag=True, default=False)
+    @click.option('-n', '--no-run-cmd', is_flag=True, default=True, help='Do not execute the command')
+    def parse_generic_args(url: str, method: str, print_cmd: bool, no_run_cmd: bool):
+        """Parses generic arguments for HTTP requests"""
+        generic_args = (url, method, print_cmd, no_run_cmd)
+        return generic_args
     parser = argparse.ArgumentParser(prefix_chars='-+')
     parser.add_argument('url')
     parser.add_argument('-X', '--method', choices=METHODS, default='GET')
