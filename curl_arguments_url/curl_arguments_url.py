@@ -1,18 +1,27 @@
 """Main module."""
 import argparse
+import datetime
 import json
 import os
 import re
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, Callable, Any, \
-    Set
+    Set, cast
+from typing_extensions import Literal
 from urllib.parse import urlencode
 import traceback
 
 import click
 from diskcache import Cache
 import yaml
+
+
+CARL_DIR = os.path.join(os.environ['HOME'], '.carl')
+SWAGGER_DIR = os.path.join(CARL_DIR, 'swagger')
+ARG_CACHE = os.path.join(CARL_DIR, 'arg_cache')
+SWAGGER_CACHE = os.path.join(CARL_DIR, 'swagger_cache')
 
 METHODS: List[str] = [
     'POST',
@@ -34,11 +43,11 @@ class ArrayItem(NamedTuple):
     item: Any
 
 
-def get_array_item_type(type_):
-    def array_item_type(item: type_) -> ArrayItem:
-        return ArrayItem(type_(item))
+class ArrayItemType(NamedTuple):
+    type_: Callable[[Any], Any]
 
-    return array_item_type
+    def __call__(self, item: str) -> ArrayItem:
+        return ArrayItem(self.type_(item))
 
 
 TYPES: Dict[str, ArgType] = {
@@ -140,9 +149,20 @@ class SwaggerEndpoint:
                 yield param
 
 
-class SwaggerRepo:
-    _endpoints: List[SwaggerEndpoint]
+SwaggerCacheByMethod = Dict[Tuple[Literal['METHOD'], str, int], SwaggerEndpoint]
+SwaggerCacheByMethodUrl = Dict[Tuple[Literal['METHOD-URL'], str, str], SwaggerEndpoint]
+SwaggerCacheTime = Dict[Literal['TIME'], int]
+SwaggerCacheMethodCount = Dict[Tuple[Literal['METHOD-COUNT'], str], int]
+SwaggerCache = Union[SwaggerCacheByMethod, SwaggerCacheByMethodUrl, SwaggerCacheTime, SwaggerCacheMethodCount]
 
+
+class SwaggerCacheNamespaces:
+    TIME: Literal['TIME'] = 'TIME'
+    METHOD: Literal['METHOD'] = 'METHOD'
+    METHOD_URL: Literal['METHOD-URL'] = 'METHOD-URL'
+    METHOD_COUNT: Literal['METHOD-COUNT'] = 'METHOD-COUNT'
+
+class SwaggerRepo:
     @staticmethod
     def models_from_data(models_data: Dict[str, Any]) -> Dict[str, SwaggerModel]:
         return_models: Dict[str, SwaggerModel] = {}
@@ -160,7 +180,7 @@ class SwaggerRepo:
                 if type_str == 'array':
                     items_type_str = prop_spec.get('items', {}).get('type', 'string')
                     items_type = type_for_str(items_type_str)
-                    type_ = get_array_item_type(items_type)
+                    type_ = ArrayItemType(items_type)
                 else:
                     type_ = type_for_str(type_str)
 
@@ -176,61 +196,73 @@ class SwaggerRepo:
 
         return return_models
 
-    def __init__(self, swagger_data: Optional[dict] = None, use_cache: bool = True):
-        self._endpoints = []
-        if swagger_data is None:
-            multi_swagger_data = []
+    def __init__(self, swagger_data: Optional[dict] = None):
+        self._cache = cast(SwaggerCache, Cache(SWAGGER_CACHE))
+        self._swagger_files = [os.path.join(SWAGGER_DIR, f) for f in os.listdir(SWAGGER_DIR)]
 
-            swagger_dir = os.path.join(os.environ['HOME'], '.carl', 'swagger')
-            swagger_files = [os.path.join(swagger_dir, f) for f in os.listdir(swagger_dir)]
-            cache_file = os.path.join(os.environ['HOME'], '.carl', 'cache', 'cache.jsonl')
+    def _refresh_cache(self):
+        multi_swagger_data = []
+        for file in self._swagger_files:
+            with open(file, 'r') as fh:
+                loaded = yaml.safe_load(fh)
+                if loaded is not None:
+                    multi_swagger_data.append(loaded)
 
-            cache_time = os.path.getmtime(cache_file)
-            yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
-            if cache_time > yaml_files_time:
-                with open(cache_file, 'r') as fh:
-                    multi_swagger_data = json.load(fh)
-            else:
-                for file in swagger_files:
-                    with open(file, 'r') as fh:
-                        loaded = yaml.safe_load(fh)
-                        if loaded is not None:
-                            multi_swagger_data.append(loaded)
-                with open(cache_file, 'w') as fh:
-                    json.dump(multi_swagger_data, fh)
-        else:
-            multi_swagger_data = [swagger_data]
-
+        by_method: Dict[str, List[SwaggerEndpoint]] = defaultdict(list)
+        by_method_url_cache = cast(SwaggerCacheByMethodUrl, self._cache)
         for swagger_data_ in multi_swagger_data:
             base_path = swagger_data_['basePath']
             if 'models' in swagger_data_:
-                self._models = self.models_from_data(swagger_data_['models'])
+                models = self.models_from_data(swagger_data_['models'])
             else:
-                self._models = {}
+                models = {}
             for api in swagger_data_['apis']:
                 endpoint_url = base_path + api['path']
                 for op in api['operations']:
                     try:
-                        method = op['method']
+                        method: str = op['method']
                         endpoint = SwaggerEndpoint(endpoint_url, method,
                                                    swagger_param_data=op['parameters'],
-                                                   swagger_models=self._models)
-                        self._endpoints.append(endpoint)
+                                                   swagger_models=models)
+                        by_method[method].append(endpoint)
+                        by_method_url_cache[SwaggerCacheNamespaces.METHOD_URL, method, endpoint.url] = endpoint
                     except Exception:
                         print(f"Error for {endpoint_url} {op.get('method', '<no method>')}", file=sys.stderr)
                         traceback.print_exc(file=sys.stderr)
 
+        by_method_cache = cast(SwaggerCacheByMethod, self._cache)
+        by_method_count_cache = cast(SwaggerCacheMethodCount, self._cache)
+        for method, endpoint_list in by_method.items():
+            by_method_count_cache[SwaggerCacheNamespaces.METHOD_COUNT, method] = len(endpoint_list)
+            for i, endpoint in enumerate(endpoint_list):
+                by_method_cache[SwaggerCacheNamespaces.METHOD, method, i] = endpoint
+
+    def _does_cache_need_refresh(self) -> bool:
+        cache = cast(SwaggerCacheTime, self._cache)
+        cache_time = cache.get(SwaggerCacheNamespaces.TIME, 0)
+        yaml_files_time = max(os.path.getmtime(f) for f in self._swagger_files)
+
+        return yaml_files_time > cache_time
+
     def get_endpoint_for_url(self, url: str, method: str = 'GET') -> SwaggerEndpoint:
-        for endpoint in self._endpoints:
-            if url == endpoint.url and method == endpoint.method:
-                return endpoint
+        if self._does_cache_need_refresh():
+            self._refresh_cache()
+        key = (SwaggerCacheNamespaces.METHOD_URL, method, url)
+        cache = cast(SwaggerCacheByMethodUrl, self._cache)
+        if key in cache:
+            return cache[key]
         else:
             raise Exception(f"Endpoint doesn't exist: {url} {method}")
 
     def get_endpoints_for_method(self, method: str) -> Iterable[SwaggerEndpoint]:
-        for endpoint in self._endpoints:
-            if method == endpoint.method:
-                yield endpoint
+        if self._does_cache_need_refresh():
+            self._refresh_cache()
+        by_method_count_cache = cast(SwaggerCacheMethodCount, self._cache)
+        method_count = by_method_count_cache.get((SwaggerCacheNamespaces.METHOD_COUNT, method), 0)
+
+        by_method_cache = cast(SwaggerCacheByMethod, self._cache)
+        for i in range(method_count):
+            yield by_method_cache[SwaggerCacheNamespaces.METHOD, method, i]
 
 
 def cli_args_to_cmd(cli_args: Sequence[str], swagger_model: Optional[SwaggerRepo] = None)\
@@ -259,9 +291,6 @@ ArgValue = Union[str, int, float]
 ArgPairs = List[Tuple[str, ArgValue]]
 
 MAX_HISTORY = 200
-
-ARG_CACHE = os.path.join(os.environ["HOME"], '.carl', 'arg_cache')
-
 
 def cache_param_arg_pairs(param_args: ArgPairs) -> None:
     cache = Cache(ARG_CACHE)
