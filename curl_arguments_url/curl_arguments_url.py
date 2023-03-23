@@ -176,17 +176,28 @@ class SwaggerRepo:
 
         return return_models
 
-    def __init__(self, swagger_data: Optional[dict] = None):
+    def __init__(self, swagger_data: Optional[dict] = None, use_cache: bool = True):
         self._endpoints = []
         if swagger_data is None:
             multi_swagger_data = []
 
             swagger_dir = os.path.join(os.environ['HOME'], '.carl', 'swagger')
-            swagger_files = os.listdir(swagger_dir)
-            for file in swagger_files:
-                full_path = os.path.join(swagger_dir, file)
-                with open(full_path, 'r') as fh:
-                    multi_swagger_data.append(yaml.safe_load(fh))
+            swagger_files = [os.path.join(swagger_dir, f) for f in os.listdir(swagger_dir)]
+            cache_file = os.path.join(os.environ['HOME'], '.carl', 'cache', 'cache.jsonl')
+
+            cache_time = os.path.getmtime(cache_file)
+            yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
+            if cache_time > yaml_files_time:
+                with open(cache_file, 'r') as fh:
+                    multi_swagger_data = json.load(fh)
+            else:
+                for file in swagger_files:
+                    with open(file, 'r') as fh:
+                        loaded = yaml.safe_load(fh)
+                        if loaded is not None:
+                            multi_swagger_data.append(loaded)
+                with open(cache_file, 'w') as fh:
+                    json.dump(multi_swagger_data, fh)
         else:
             multi_swagger_data = [swagger_data]
 
