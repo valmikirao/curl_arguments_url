@@ -3,9 +3,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from collections import defaultdict
 from datetime import datetime
+from hashlib import md5
 from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, Callable, Any, \
     Set, MutableMapping
 from typing_extensions import Literal
@@ -159,24 +161,38 @@ class SwaggerCache(Generic[T, V]):
 
     @classmethod
     def clear_all(cls):
-        cls._disk_cache().clear()
+        shutil.rmtree(SWAGGER_CACHE, ignore_errors=True)
 
     def __init__(self):
-        self._key_prefix = self._key_prefix_count
-        self._key_prefix_count += 1
+        self._dir = os.path.join(SWAGGER_CACHE, str(self.__class__._key_prefix_count))
+
+        self.__class__._key_prefix_count += 1
+
+    def _get_key_filename(self, key: T) -> str:
+        key_stringified = json.dumps(key).encode()
+        key_hash = md5(key_stringified).hexdigest()
+        return os.path.join(self._dir, key_hash)
 
     def __getitem__(self, key: T) -> V:
-        disk_cache = self._disk_cache()
-        return disk_cache[self._key_prefix, key]
+        key_filename = self._get_key_filename(key)
+        if os.path.exists(key_filename):
+            with open(key_filename, 'r') as fh:
+                return json.load(fh)
+        else:
+            raise KeyError(key)
 
     def __setitem__(self, key: T, value: V) -> None:
-        disk_cache = self._disk_cache()
-        disk_cache[self._key_prefix, key] = value
+        os.makedirs(self._dir, exist_ok=True)
+        key_filename = self._get_key_filename(key)
+        with open(key_filename, 'w') as fh:
+            json.dump(value, fh)
 
     def get(self, key: T, default: V) -> V:
         # made default required on purpose here
-        disk_cache = self._disk_cache()
-        return disk_cache.get((self._key_prefix, key), default)
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
 
 class SwaggerRepo:
@@ -230,6 +246,7 @@ class SwaggerRepo:
             if yaml_files_time > cache_time:
                 SwaggerCache.clear_all()
                 self._load_swagger_data(swagger_files)
+                self._time_cache['TIME'] = datetime.now().timestamp()
         else:
             assert False, 'TODO: Implement the caching in this case, or rather the lack-of-caching'
             multi_swagger_data = [swagger_data]
@@ -258,12 +275,11 @@ class SwaggerRepo:
                                                swagger_param_data=op['parameters'],
                                                swagger_models=models)
                     urls_by_method[endpoint.method].append(endpoint.url)
-                    self._endpoint_by_method_url_cache[endpoint.method, endpoint.url] = endpoint
+                    # self._endpoint_by_method_url_cache[endpoint.method, endpoint.url] = endpoint
 
             for method, urls in urls_by_method.items():
                 self._url_by_method_cache[method] = urls
 
-            self._time_cache['TIME'] = datetime.now().timestamp()
 
     def get_endpoint_for_url(self, url: str, method: str = 'GET') -> SwaggerEndpoint:
         return self._endpoint_by_method_url_cache[method, url]
