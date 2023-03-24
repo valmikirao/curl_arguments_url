@@ -26,9 +26,9 @@ def main():
     args = parser.parse_args()
 
     if args.cmd == 'urls':
-        endpoints = swagger_model.get_endpoints_for_method(args.method)
-        for end in endpoints:
-            print(end.url)
+        urls = swagger_model.get_urls_for_method(args.method)
+        for url in urls:
+            print(url)
     elif args.cmd == 'params':
         endpoint = swagger_model.get_endpoint_for_url(args.url, args.method)
         for param in endpoint.list_params():

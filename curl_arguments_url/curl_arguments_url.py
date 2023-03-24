@@ -5,10 +5,11 @@ import os
 import re
 import sys
 from collections import defaultdict
+from datetime import datetime
 from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, Callable, Any, \
-    Set
+    Set, MutableMapping
+from typing_extensions import Literal
 from urllib.parse import urlencode
-import traceback
 
 import click
 from diskcache import Cache
@@ -23,6 +24,8 @@ METHODS: List[str] = [
 ]
 
 T = TypeVar('T')
+V = TypeVar('V')
+U = TypeVar('U')
 ArgType = Callable[[str], T]
 
 
@@ -34,11 +37,15 @@ class ArrayItem(NamedTuple):
     item: Any
 
 
-def get_array_item_type(type_):
-    def array_item_type(item: type_) -> ArrayItem:
-        return ArrayItem(type_(item))
+class ArrayItemType(NamedTuple):
+    type_: Callable[[Any], Any]
 
-    return array_item_type
+    def __call__(self, item: str) -> ArrayItem:
+        return ArrayItem(self.type_(item))
+
+
+def boolean_type(val: str) -> bool:
+    return val != '' and 'true'.startswith(val.lower())
 
 
 TYPES: Dict[str, ArgType] = {
@@ -46,7 +53,7 @@ TYPES: Dict[str, ArgType] = {
     'integer': int,
     'number': float,
     # give True for 't' 'True' 'true' 'tr', etc
-    'boolean': lambda val: val != '' and 'true'.startswith(val.lower()),
+    'boolean': boolean_type,
 }
 
 
@@ -140,6 +147,38 @@ class SwaggerEndpoint:
                 yield param
 
 
+class SwaggerCache(Generic[T, V]):
+    _key_prefix_count = 0
+    _disk_cache_singleton: Optional[Cache] = None
+
+    @classmethod
+    def _disk_cache(cls) -> Cache:
+        if cls._disk_cache_singleton is None:
+            cls._disk_cache_singleton = Cache(SWAGGER_CACHE)
+        return cls._disk_cache_singleton
+
+    @classmethod
+    def clear_all(cls):
+        cls._disk_cache().clear()
+
+    def __init__(self):
+        self._key_prefix = self._key_prefix_count
+        self._key_prefix_count += 1
+
+    def __getitem__(self, key: T) -> V:
+        disk_cache = self._disk_cache()
+        return disk_cache[self._key_prefix, key]
+
+    def __setitem__(self, key: T, value: V) -> None:
+        disk_cache = self._disk_cache()
+        disk_cache[self._key_prefix, key] = value
+
+    def get(self, key: T, default: V) -> V:
+        # made default required on purpose here
+        disk_cache = self._disk_cache()
+        return disk_cache.get((self._key_prefix, key), default)
+
+
 class SwaggerRepo:
     _endpoints: List[SwaggerEndpoint]
 
@@ -160,7 +199,7 @@ class SwaggerRepo:
                 if type_str == 'array':
                     items_type_str = prop_spec.get('items', {}).get('type', 'string')
                     items_type = type_for_str(items_type_str)
-                    type_ = get_array_item_type(items_type)
+                    type_ = ArrayItemType(items_type)
                 else:
                     type_ = type_for_str(type_str)
 
@@ -177,60 +216,60 @@ class SwaggerRepo:
         return return_models
 
     def __init__(self, swagger_data: Optional[dict] = None, use_cache: bool = True):
-        self._endpoints = []
-        if swagger_data is None:
-            multi_swagger_data = []
+        # self._endpoints = []
+        self._endpoint_by_method_url_cache = SwaggerCache[Tuple[str, str], SwaggerEndpoint]()
+        self._url_by_method_cache = SwaggerCache[str, List[str]]()
+        self._time_cache = SwaggerCache[Literal['TIME'], float]()
 
+        if swagger_data is None:
             swagger_dir = os.path.join(os.environ['HOME'], '.carl', 'swagger')
             swagger_files = [os.path.join(swagger_dir, f) for f in os.listdir(swagger_dir)]
-            cache_file = os.path.join(os.environ['HOME'], '.carl', 'cache', 'cache.jsonl')
 
-            cache_time = os.path.getmtime(cache_file)
+            cache_time = self._time_cache.get('TIME', 0)
             yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
-            if cache_time > yaml_files_time:
-                with open(cache_file, 'r') as fh:
-                    multi_swagger_data = json.load(fh)
-            else:
-                for file in swagger_files:
-                    with open(file, 'r') as fh:
-                        loaded = yaml.safe_load(fh)
-                        if loaded is not None:
-                            multi_swagger_data.append(loaded)
-                with open(cache_file, 'w') as fh:
-                    json.dump(multi_swagger_data, fh)
+            if yaml_files_time > cache_time:
+                SwaggerCache.clear_all()
+                self._load_swagger_data(swagger_files)
         else:
+            assert False, 'TODO: Implement the caching in this case, or rather the lack-of-caching'
             multi_swagger_data = [swagger_data]
 
+    def _load_swagger_data(self, swagger_files: Iterable[str]):
+        multi_swagger_data: List[Dict[str, Any]] = []
+        for file in swagger_files:
+            with open(file, 'r') as fh:
+                loaded = yaml.safe_load(fh)
+                if loaded is not None:
+                    multi_swagger_data.append(loaded)
+                else:
+                    raise Exception(f"Issue with Swagger file {file!r}")
+        urls_by_method: MutableMapping[str, List[str]] = defaultdict(list)
         for swagger_data_ in multi_swagger_data:
             base_path = swagger_data_['basePath']
             if 'models' in swagger_data_:
-                self._models = self.models_from_data(swagger_data_['models'])
+                models = self.models_from_data(swagger_data_['models'])
             else:
-                self._models = {}
+                models = {}
             for api in swagger_data_['apis']:
                 endpoint_url = base_path + api['path']
                 for op in api['operations']:
-                    try:
-                        method = op['method']
-                        endpoint = SwaggerEndpoint(endpoint_url, method,
-                                                   swagger_param_data=op['parameters'],
-                                                   swagger_models=self._models)
-                        self._endpoints.append(endpoint)
-                    except Exception:
-                        print(f"Error for {endpoint_url} {op.get('method', '<no method>')}", file=sys.stderr)
-                        traceback.print_exc(file=sys.stderr)
+                    method = op['method']
+                    endpoint = SwaggerEndpoint(endpoint_url, method,
+                                               swagger_param_data=op['parameters'],
+                                               swagger_models=models)
+                    urls_by_method[endpoint.method].append(endpoint.url)
+                    self._endpoint_by_method_url_cache[endpoint.method, endpoint.url] = endpoint
+
+            for method, urls in urls_by_method.items():
+                self._url_by_method_cache[method] = urls
+
+            self._time_cache['TIME'] = datetime.now().timestamp()
 
     def get_endpoint_for_url(self, url: str, method: str = 'GET') -> SwaggerEndpoint:
-        for endpoint in self._endpoints:
-            if url == endpoint.url and method == endpoint.method:
-                return endpoint
-        else:
-            raise Exception(f"Endpoint doesn't exist: {url} {method}")
+        return self._endpoint_by_method_url_cache[method, url]
 
-    def get_endpoints_for_method(self, method: str) -> Iterable[SwaggerEndpoint]:
-        for endpoint in self._endpoints:
-            if method == endpoint.method:
-                yield endpoint
+    def get_urls_for_method(self, method: str) -> Iterable[str]:
+        return self._url_by_method_cache.get(method, [])
 
 
 def cli_args_to_cmd(cli_args: Sequence[str], swagger_model: Optional[SwaggerRepo] = None)\
@@ -260,8 +299,9 @@ ArgPairs = List[Tuple[str, ArgValue]]
 
 MAX_HISTORY = 200
 
-ARG_CACHE = os.path.join(os.environ["HOME"], '.carl', 'arg_cache')
-
+CARL_DIR = os.path.join(os.environ["HOME"], '.carl')
+ARG_CACHE = os.path.join(CARL_DIR, 'arg_cache')
+SWAGGER_CACHE = os.path.join(CARL_DIR, 'swagger_cache')
 
 def cache_param_arg_pairs(param_args: ArgPairs) -> None:
     cache = Cache(ARG_CACHE)
