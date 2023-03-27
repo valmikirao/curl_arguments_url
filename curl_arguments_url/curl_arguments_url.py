@@ -9,13 +9,14 @@ from collections import defaultdict
 from datetime import datetime
 from hashlib import md5
 from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, Callable, Any, \
-    Set, MutableMapping
+    Set, MutableMapping, cast
 from typing_extensions import Literal
 from urllib.parse import urlencode
 
 import click
-from diskcache import Cache
 import yaml
+
+CARL_DIR = os.path.join(os.environ["HOME"], '.carl')
 
 METHODS: List[str] = [
     'POST',
@@ -29,6 +30,42 @@ T = TypeVar('T')
 V = TypeVar('V')
 U = TypeVar('U')
 ArgType = Callable[[str], T]
+
+
+class FileCache(Generic[T, V]):
+    CACHE_DIR = os.path.join(CARL_DIR, 'cache')
+
+    def __init__(self, dir: str):
+        self._dir = os.path.join(self.CACHE_DIR, dir)
+
+    def clear(self) -> None:
+        shutil.rmtree(self._dir, ignore_errors=True)
+
+    def _get_key_filename(self, key: T) -> str:
+        key_stringified = json.dumps(key).encode()
+        key_hash = md5(key_stringified).hexdigest()
+        return os.path.join(self._dir, key_hash)
+
+    def __getitem__(self, key: T) -> V:
+        key_filename = self._get_key_filename(key)
+        if os.path.exists(key_filename):
+            with open(key_filename, 'r') as fh:
+                return json.load(fh)
+        else:
+            raise KeyError(key)
+
+    def __setitem__(self, key: T, value: V) -> None:
+        os.makedirs(self._dir, exist_ok=True)
+        key_filename = self._get_key_filename(key)
+        with open(key_filename, 'w') as fh:
+            json.dump(value, fh)
+
+    def get(self, key: T, default: V) -> V:
+        # made default required on purpose here
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
 
 class Raw(NamedTuple):
@@ -59,10 +96,10 @@ TYPES: Dict[str, ArgType] = {
 }
 
 
-class Param(NamedTuple, Generic[T]):
+class Param(NamedTuple):
     name: str
     param_type: str
-    description: str = ""
+    description: str = ''
     required: bool = False
     type_: ArgType = str
 
@@ -104,7 +141,7 @@ class SwaggerEndpoint:
             yield Param(
                 name=param_data['name'],
                 param_type=param_data['paramType'],
-                description=param_data.get('description', ""),
+                description=param_data.get('description', ''),
                 required=param_data.get('required', False),
                 type_=TYPES[param_data.get('type', 'string')],
             )
@@ -149,55 +186,7 @@ class SwaggerEndpoint:
                 yield param
 
 
-class SwaggerCache(Generic[T, V]):
-    _key_prefix_count = 0
-    _disk_cache_singleton: Optional[Cache] = None
-
-    @classmethod
-    def _disk_cache(cls) -> Cache:
-        if cls._disk_cache_singleton is None:
-            cls._disk_cache_singleton = Cache(SWAGGER_CACHE)
-        return cls._disk_cache_singleton
-
-    @classmethod
-    def clear_all(cls):
-        shutil.rmtree(SWAGGER_CACHE, ignore_errors=True)
-
-    def __init__(self):
-        self._dir = os.path.join(SWAGGER_CACHE, str(self.__class__._key_prefix_count))
-
-        self.__class__._key_prefix_count += 1
-
-    def _get_key_filename(self, key: T) -> str:
-        key_stringified = json.dumps(key).encode()
-        key_hash = md5(key_stringified).hexdigest()
-        return os.path.join(self._dir, key_hash)
-
-    def __getitem__(self, key: T) -> V:
-        key_filename = self._get_key_filename(key)
-        if os.path.exists(key_filename):
-            with open(key_filename, 'r') as fh:
-                return json.load(fh)
-        else:
-            raise KeyError(key)
-
-    def __setitem__(self, key: T, value: V) -> None:
-        os.makedirs(self._dir, exist_ok=True)
-        key_filename = self._get_key_filename(key)
-        with open(key_filename, 'w') as fh:
-            json.dump(value, fh)
-
-    def get(self, key: T, default: V) -> V:
-        # made default required on purpose here
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-
 class SwaggerRepo:
-    _endpoints: List[SwaggerEndpoint]
-
     @staticmethod
     def models_from_data(models_data: Dict[str, Any]) -> Dict[str, SwaggerModel]:
         return_models: Dict[str, SwaggerModel] = {}
@@ -231,58 +220,87 @@ class SwaggerRepo:
 
         return return_models
 
-    def __init__(self, swagger_data: Optional[dict] = None, use_cache: bool = True):
-        # self._endpoints = []
-        self._endpoint_by_method_url_cache = SwaggerCache[Tuple[str, str], SwaggerEndpoint]()
-        self._url_by_method_cache = SwaggerCache[str, List[str]]()
-        self._time_cache = SwaggerCache[Literal['TIME'], float]()
+    _endpoint_by_method_url_cache: FileCache[Tuple[str, str], Dict[str, Any]]
+    _url_by_method_cache: FileCache[str, List[str]]
+    _time_cache: FileCache[Literal['TIME'], float]
 
-        if swagger_data is None:
+    def __init__(self, swagger_test_data: Optional[dict] = None):
+        # self._endpoints = []
+        self._endpoint_by_method_url_cache = FileCache('endpoint_by_method_url_cache')
+        self._url_by_method_cache = FileCache('url_by_method_cache')
+        self._time_cache = FileCache('time_cache')
+
+        if swagger_test_data is None:
             swagger_dir = os.path.join(os.environ['HOME'], '.carl', 'swagger')
             swagger_files = [os.path.join(swagger_dir, f) for f in os.listdir(swagger_dir)]
 
             cache_time = self._time_cache.get('TIME', 0)
             yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
             if yaml_files_time > cache_time:
-                SwaggerCache.clear_all()
-                self._load_swagger_data(swagger_files)
+                self.clear_all_caches()
+                self._load_swagger_data(swagger_files=swagger_files)
                 self._time_cache['TIME'] = datetime.now().timestamp()
         else:
-            assert False, 'TODO: Implement the caching in this case, or rather the lack-of-caching'
-            multi_swagger_data = [swagger_data]
+            # this is a testing case, so make all caches are ephemeral
+            self._endpoint_by_method_url_cache = cast(FileCache, {})
+            self._url_by_method_cache = cast(FileCache, {})
+            self._time_cache = cast(FileCache, {})
 
-    def _load_swagger_data(self, swagger_files: Iterable[str]):
+            self._load_swagger_data(swagger_data=swagger_test_data)
+
+    def clear_all_caches(self) -> None:
+        self._endpoint_by_method_url_cache.clear()
+        self._url_by_method_cache.clear()
+        self._time_cache.clear()
+
+    def _load_swagger_data(self, swagger_files: Optional[Iterable[str]] = None,
+                           swagger_data: Optional[Dict[str, Any]] = None):
         multi_swagger_data: List[Dict[str, Any]] = []
-        for file in swagger_files:
-            with open(file, 'r') as fh:
-                loaded = yaml.safe_load(fh)
-                if loaded is not None:
-                    multi_swagger_data.append(loaded)
-                else:
-                    raise Exception(f"Issue with Swagger file {file!r}")
+        if swagger_files is not None:
+            for file in swagger_files:
+                with open(file, 'r') as fh:
+                    loaded = yaml.safe_load(fh)
+                    if loaded is not None:
+                        multi_swagger_data.append(loaded)
+                    else:
+                        raise Exception(f"Issue with Swagger file {file!r}")
+        elif swagger_data is not None:
+            multi_swagger_data = [swagger_data]
+        else:
+            raise Exception(f"One of 'swagger_files' or 'swagger_data' is required")
         urls_by_method: MutableMapping[str, List[str]] = defaultdict(list)
         for swagger_data_ in multi_swagger_data:
             base_path = swagger_data_['basePath']
             if 'models' in swagger_data_:
-                models = self.models_from_data(swagger_data_['models'])
+                models_data = swagger_data_['models']
             else:
-                models = {}
+                models_data = {}
             for api in swagger_data_['apis']:
                 endpoint_url = base_path + api['path']
                 for op in api['operations']:
                     method = op['method']
-                    endpoint = SwaggerEndpoint(endpoint_url, method,
-                                               swagger_param_data=op['parameters'],
-                                               swagger_models=models)
-                    urls_by_method[endpoint.method].append(endpoint.url)
-                    # self._endpoint_by_method_url_cache[endpoint.method, endpoint.url] = endpoint
+                    parameters = op['parameters']
+                    summary = op['summary']
+                    swagger_endpoint_dict = {
+                        'url': endpoint_url, 'method': method,
+                        'swagger_param_data': parameters, 'swagger_models_data': models_data,
+                        'summary': summary
+                    }
+                    self._endpoint_by_method_url_cache[method, endpoint_url] = swagger_endpoint_dict
+                    urls_by_method[op['method']].append(endpoint_url)
 
             for method, urls in urls_by_method.items():
                 self._url_by_method_cache[method] = urls
 
-
     def get_endpoint_for_url(self, url: str, method: str = 'GET') -> SwaggerEndpoint:
-        return self._endpoint_by_method_url_cache[method, url]
+        swagger_endpoint_dict = self._endpoint_by_method_url_cache[method, url]
+        swagger_models = self.models_from_data(swagger_endpoint_dict['swagger_models_data'])
+        return SwaggerEndpoint(
+            url=swagger_endpoint_dict['url'],
+            method=swagger_endpoint_dict['method'],
+            swagger_param_data=swagger_endpoint_dict['swagger_param_data'],
+            swagger_models=swagger_models
+        )
 
     def get_urls_for_method(self, method: str) -> Iterable[str]:
         return self._url_by_method_cache.get(method, [])
@@ -315,17 +333,15 @@ ArgPairs = List[Tuple[str, ArgValue]]
 
 MAX_HISTORY = 200
 
-CARL_DIR = os.path.join(os.environ["HOME"], '.carl')
-ARG_CACHE = os.path.join(CARL_DIR, 'arg_cache')
-SWAGGER_CACHE = os.path.join(CARL_DIR, 'swagger_cache')
+arg_cache = FileCache('args')
+
 
 def cache_param_arg_pairs(param_args: ArgPairs) -> None:
-    cache = Cache(ARG_CACHE)
     for key, value in param_args:
-        arg_history: List[ArgValue] = cache.get(key) or []
+        arg_history: List[ArgValue] = arg_cache.get(key, [])
         new_history: List[ArgValue] = [value] + [a for a in arg_history if a != value]
         new_history = new_history[:MAX_HISTORY]
-        cache.set(key, new_history)
+        arg_cache[key] = new_history
 
 
 def format_post_data(param_args: ArgPairs, endpoint_params: EndpointParams) -> Tuple[List[str], ArgPairs]:
@@ -460,3 +476,17 @@ def parse_generic_args(cli_args: Sequence[str]) -> Tuple[argparse.Namespace, Seq
     generic_args, remaining_args = parser.parse_known_args(cli_args)
 
     return generic_args, remaining_args
+
+
+def get_param_values(param_name: str) -> Iterable[str]:
+    values = arg_cache.get(param_name, [])
+    dedupe = set()
+
+    for sub_values in values:
+        if isinstance(sub_values, str):
+            sub_values = [sub_values]
+
+        for val in sub_values:
+            if val not in dedupe and val != '':
+                yield val
+                dedupe.add(val)

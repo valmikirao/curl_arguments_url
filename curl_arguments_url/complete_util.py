@@ -1,8 +1,7 @@
 import argparse
 import shlex
 
-from curl_arguments_url.curl_arguments_url import SwaggerRepo, METHODS, ARG_CACHE
-from diskcache import Cache
+from curl_arguments_url.curl_arguments_url import SwaggerRepo, METHODS, get_param_values
 
 
 def main():
@@ -31,28 +30,22 @@ def main():
             print(url)
     elif args.cmd == 'params':
         endpoint = swagger_model.get_endpoint_for_url(args.url, args.method)
+        format_template = args.format
         for param in endpoint.list_params():
-            print(args.format.format(
+            print(format_template.format(
                 param=param.name,
                 quoted_param=shlex.quote(param.name)
                 # param_type=param.param_type,
             ))
     elif args.cmd == 'param-values':
-        cache = Cache(ARG_CACHE)
         param_name = getattr(args, 'param-name')
-        values = cache.get(param_name) or []
-        dedupe = set()
-        for sub_values in values:
-            if isinstance(sub_values, str):
-                sub_values = [sub_values]
-
-            for val in sub_values:
-                if val not in dedupe and val != '':
-                    print(args.format.format(
-                        value=val,
-                        quoted_value=shlex.quote(val)
-                    ))
-                    dedupe.add(val)
+        values_to_print = get_param_values(param_name)
+        format_template = args.format
+        for val in values_to_print:
+            print(format_template.format(
+                value=val,
+                quoted_value=shlex.quote(val)
+            ))
 
     return 0
 
