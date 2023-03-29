@@ -13,22 +13,23 @@ function _carl_utils {
 }
 
 function _carl_url {
-    eval "values=($(_carl_utils urls $opt_args[-X] | sed 's/:/\\:/g'))"
-
-    if [[ $values ]]; then
-	    _describe url $values
+    local -a values
+    values=("${(@f)$(_carl_utils urls $opt_args[-X] --format '{colon_escaped_url}:{summary}')}")
+    if [[ "$values" ]]; then
+	    _describe 'url' values
 	fi
 }
 
 function _carl_params {
-	local url param_args arguments
+	local url param_args
+    local -a arguments
 
 	url=$(bash -c 'echo '$line[1])
 	if [[ $opt_args[-X] ]]; then
 		param_args=(-X $opt_args[-X])
 	fi
 
-    eval "arguments=($(_carl_utils params  "$param_args[@]" --format '+{param}:value:{{_carl_param_values\ {param}}}' "$(printf '%b' $url)"))"
+    arguments=("${(@f)$(_carl_utils params  "$param_args[@]" --format '+{param}[{description}]:value:{{_carl_param_values\ {param}}}' "$(printf '%b' $url)")}")
 	if [[ "$arguments" ]]; then
         _arguments $arguments
     fi

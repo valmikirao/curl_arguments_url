@@ -83,15 +83,19 @@ class ArrayItemType(NamedTuple):
         return ArrayItem(self.type_(item))
 
 
-def boolean_type(val: str) -> bool:
-    return val != '' and 'true'.startswith(val.lower())
+def boolean_type(val: Optional[str]) -> bool:
+    if val and val.lower() in ('1', 't', 'true'):
+        return True
+    elif val is None or val.lower() in ('', '0', 'f', 'false'):
+        return False
+    else:
+        raise TypeError(f"Value {val!r} can't be converted to boolean")
 
 
 TYPES: Dict[str, ArgType] = {
     'string': str,
     'integer': int,
     'number': float,
-    # give True for 't' 'True' 'true' 'tr', etc
     'boolean': boolean_type,
 }
 
@@ -128,6 +132,11 @@ class ParamArg(Generic[T]):
 class SwaggerModel(NamedTuple):
     id: str
     properties: List[Param]
+
+
+class SwaggerUrl(NamedTuple):
+    url: str
+    summary: Optional[str]
 
 
 class SwaggerEndpoint:
@@ -221,7 +230,7 @@ class SwaggerRepo:
         return return_models
 
     _endpoint_by_method_url_cache: FileCache[Tuple[str, str], Dict[str, Any]]
-    _url_by_method_cache: FileCache[str, List[str]]
+    _url_by_method_cache: FileCache[str, List[SwaggerUrl]]
     _time_cache: FileCache[Literal['TIME'], float]
 
     def __init__(self, swagger_test_data: Optional[dict] = None):
@@ -268,7 +277,7 @@ class SwaggerRepo:
             multi_swagger_data = [swagger_data]
         else:
             raise Exception(f"One of 'swagger_files' or 'swagger_data' is required")
-        urls_by_method: MutableMapping[str, List[str]] = defaultdict(list)
+        urls_by_method: MutableMapping[str, List[SwaggerUrl]] = defaultdict(list)
         for swagger_data_ in multi_swagger_data:
             base_path = swagger_data_['basePath']
             if 'models' in swagger_data_:
@@ -280,14 +289,16 @@ class SwaggerRepo:
                 for op in api['operations']:
                     method = op['method']
                     parameters = op['parameters']
-                    summary = op['summary']
+                    summary: Optional[str] = op.get('summary')
                     swagger_endpoint_dict = {
                         'url': endpoint_url, 'method': method,
                         'swagger_param_data': parameters, 'swagger_models_data': models_data,
-                        'summary': summary
                     }
                     self._endpoint_by_method_url_cache[method, endpoint_url] = swagger_endpoint_dict
-                    urls_by_method[op['method']].append(endpoint_url)
+                    urls_by_method[op['method']].append(SwaggerUrl(
+                        url=endpoint_url,
+                        summary=summary
+                    ))
 
             for method, urls in urls_by_method.items():
                 self._url_by_method_cache[method] = urls
@@ -302,8 +313,9 @@ class SwaggerRepo:
             swagger_models=swagger_models
         )
 
-    def get_urls_for_method(self, method: str) -> Iterable[str]:
-        return self._url_by_method_cache.get(method, [])
+    def get_urls_for_method(self, method: str) -> Iterable[SwaggerUrl]:
+        for item in self._url_by_method_cache.get(method, []):
+            yield SwaggerUrl(*item)
 
 
 def cli_args_to_cmd(cli_args: Sequence[str], swagger_model: Optional[SwaggerRepo] = None)\
