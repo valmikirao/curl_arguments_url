@@ -1,0 +1,11 @@
+openapi: 3.0.0
+servers:
+  - url: fake.com
+paths:
+  /get:
+    post:
+      parameters:
+        - name: foo
+          in: query
+          schema:
+              type: string

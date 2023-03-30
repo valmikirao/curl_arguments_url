@@ -28,6 +28,16 @@ Features
 
 * TODO
 
+
+TODO
+-------
+
+* Autocomplete enum-ed props
+* Deal with non-json body and more complicated properties/parameters
+* Handle server variables
+* Handle multi-typed properties
+* Handle "explode" parameters
+
 Credits
 -------
 

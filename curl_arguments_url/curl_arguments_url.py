@@ -5,26 +5,26 @@ import os
 import re
 import shutil
 import sys
+from abc import ABC, abstractmethod
 from collections import defaultdict
 from datetime import datetime
+from enum import Enum
 from hashlib import md5
 from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, Callable, Any, \
-    Set, MutableMapping, cast
+    Set, MutableMapping, cast, Type
+
+from jsonref import replace_refs as replace_json_refs  # type: ignore
+from openapi_schema_pydantic import OpenAPI, Operation, Parameter, RequestBody, Schema, Reference
+from pydantic import BaseModel, validator
 from typing_extensions import Literal
 from urllib.parse import urlencode
 
-import click
 import yaml
 
 CARL_DIR = os.path.join(os.environ["HOME"], '.carl')
 
-METHODS: List[str] = [
-    'POST',
-    'GET',
-    'PUT',
-    'DELETE',
-    'PATCH'
-]
+METHODS: List[str] = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']
+
 
 T = TypeVar('T')
 V = TypeVar('V')
@@ -32,11 +32,20 @@ U = TypeVar('U')
 ArgType = Callable[[str], T]
 
 
-class FileCache(Generic[T, V]):
+class FileCache(ABC, Generic[T, V]):
     CACHE_DIR = os.path.join(CARL_DIR, 'cache')
 
     def __init__(self, dir: str):
         self._dir = os.path.join(self.CACHE_DIR, dir)
+
+    @abstractmethod
+    def freeze(self, value: V) -> str:
+        ...
+
+
+    @abstractmethod
+    def thaw(self, frozen_value: str) -> V:
+        ...
 
     def clear(self) -> None:
         shutil.rmtree(self._dir, ignore_errors=True)
@@ -50,15 +59,16 @@ class FileCache(Generic[T, V]):
         key_filename = self._get_key_filename(key)
         if os.path.exists(key_filename):
             with open(key_filename, 'r') as fh:
-                return json.load(fh)
+                return self.thaw(fh.read())
         else:
             raise KeyError(key)
 
     def __setitem__(self, key: T, value: V) -> None:
         os.makedirs(self._dir, exist_ok=True)
         key_filename = self._get_key_filename(key)
+        frozen_value = self.freeze(value)
         with open(key_filename, 'w') as fh:
-            json.dump(value, fh)
+            fh.write(frozen_value)
 
     def get(self, key: T, default: V) -> V:
         # made default required on purpose here
@@ -66,6 +76,30 @@ class FileCache(Generic[T, V]):
             return self[key]
         except KeyError:
             return default
+
+
+class FileCacheJson(FileCache[T, V]):
+    def freeze(self, value: V) -> str:
+        return json.dumps(value)
+
+    def thaw(self, frozen_value: str) -> V:
+        return json.loads(frozen_value)
+
+
+class FileCachePydantic(FileCache[T, V]):
+    def __init__(self, dir: str, model: Type[V]):
+        super().__init__(dir)
+        # TODO: Is there a better way to do this?
+        assert issubclass(model, BaseModel)
+        self._model = model
+
+    def freeze(self, value: V) -> str:
+        # TODO: Is there a better way to do this than cast()?
+        return cast(BaseModel, value).json()
+
+    def thaw(self, frozen_value: str) -> V:
+        # TODO: Is there a better way to do this than cast()?
+        return cast(V, cast(BaseModel, self._model).parse_raw(frozen_value))
 
 
 class Raw(NamedTuple):
@@ -92,23 +126,56 @@ def boolean_type(val: Optional[str]) -> bool:
         raise TypeError(f"Value {val!r} can't be converted to boolean")
 
 
-TYPES: Dict[str, ArgType] = {
-    'string': str,
-    'integer': int,
-    'number': float,
-    'boolean': boolean_type,
+class SpecialSwaggerTypeStrs:
+    object = 'object'
+    array = 'array'
+
+
+class ArgTypeEnum(Enum):
+    string = 'string'
+    integer = 'integer'
+    number = 'number'
+    boolean = 'boolean'
+    json = 'json'
+
+
+class ArgTypeModel(BaseModel):
+    type_: ArgTypeEnum
+    is_array: bool = False
+
+    def converter(self, value: str) -> Any:
+        return ARG_TYPE_FUNCS[self.type_](value)
+
+
+ARG_TYPE_FUNCS: Dict[ArgTypeEnum, ArgType] = {
+    ArgTypeEnum.string: str,
+    ArgTypeEnum.integer: int,
+    ArgTypeEnum.number: float,
+    ArgTypeEnum.boolean: boolean_type,
+    ArgTypeEnum.json: json.loads
 }
 
 
-class Param(NamedTuple):
+class ParamType(Enum):
+    query = 'query'
+    path = 'path'
+    header = 'header'
+    json_body = 'json_body'
+
+
+class CarlParam(BaseModel):
     name: str
-    param_type: str
-    description: str = ''
-    required: bool = False
-    type_: ArgType = str
+    param_type: ParamType
+    description: Optional[str] = None
+    required_: bool = False
+    type_: ArgTypeModel = ArgTypeModel(type_=ArgTypeEnum.string)
+
+    @validator('required_', pre=True)
+    def required(cls, v: Any) -> bool:
+        return bool(v)
 
 
-EndpointParams = Dict[str, List[Param]]
+EndpointParams = Dict[str, List[CarlParam]]
 
 
 class ParamArg(Generic[T]):
@@ -116,22 +183,22 @@ class ParamArg(Generic[T]):
     Makes it so you can have `+foo a +foo b` and `+foo a b`
     """
 
-    param: Param
+    param: CarlParam
     values: List[T]
 
-    def __init__(self, param: Param):
+    def __init__(self, param: CarlParam):
         self.param = param
         self.values = []
 
     def type_(self, val: str) -> 'ParamArg':
-        self.values.append(self.param.type_(val))
+        self.values.append(self.param.type_.converter(val))
 
         return self
 
 
 class SwaggerModel(NamedTuple):
     id: str
-    properties: List[Param]
+    properties: List[CarlParam]
 
 
 class SwaggerUrl(NamedTuple):
@@ -139,43 +206,24 @@ class SwaggerUrl(NamedTuple):
     summary: Optional[str]
 
 
+class EndpointToCache(BaseModel):
+    endpoint_url: str
+    method: str
+    parameters: List[CarlParam]
+
+
 class SwaggerEndpoint:
     params: EndpointParams
     path: str
     method: str
 
-    @staticmethod
-    def param_from_data(param_data: Dict[str, Any], swagger_models: Dict[str, SwaggerModel]) -> Iterable[Param]:
-        if param_data.get('type', 'string') in TYPES:
-            yield Param(
-                name=param_data['name'],
-                param_type=param_data['paramType'],
-                description=param_data.get('description', ''),
-                required=param_data.get('required', False),
-                type_=TYPES[param_data.get('type', 'string')],
-            )
-        elif param_data['type'] in swagger_models:
-            model = swagger_models[param_data['type']]
-            for param in model.properties:
-                yield Param(*param)
-        else:
-            # figure out how to warn for this
-            yield Param(
-                name=param_data['name'],
-                param_type=param_data['paramType'],
-                description=param_data.get('description', ""),
-                required=param_data.get('required', False),
-                type_=str,
-            )
-
-    def __init__(self, url: str, method: str, swagger_param_data: dict, swagger_models: Dict[str, SwaggerModel]):
+    def __init__(self, url: str, method: str, parameters: List[CarlParam]):
         self.url = url
         self.method = method
-        self.params = defaultdict(list)
+        self.params: EndpointParams = defaultdict(list)
 
-        for param_data in swagger_param_data:
-            for param in self.param_from_data(param_data, swagger_models):
-                self.params[param.name].append(param)
+        for param in parameters:
+            self.params[param.name].append(param)
 
         url_params = re.findall(r'\{(.*?)\}', url, re.DOTALL)
         for param_name in url_params:
@@ -184,133 +232,194 @@ class SwaggerEndpoint:
             else:
                 # not sure how to warn about this yet
                 # print(f"Warning: Parameter +{param_name} is in url but not explicitly declared", file=sys.stderr)
-                self.params[param_name].append(Param(
+                self.params[param_name].append(CarlParam(
                     name=param_name,
-                    param_type='path'
+                    param_type=ParamType.path
                 ))
 
-    def list_params(self) -> Iterable[Param]:
+    def list_params(self) -> Iterable[CarlParam]:
         for param_list in self.params.values():
             for param in param_list:
                 yield param
 
 
 class SwaggerRepo:
-    @staticmethod
-    def models_from_data(models_data: Dict[str, Any]) -> Dict[str, SwaggerModel]:
-        return_models: Dict[str, SwaggerModel] = {}
-        for name, spec in models_data.items():
-            model = SwaggerModel(id=spec.get('id', name), properties=[])
-            for prop_name, prop_spec in spec['properties'].items():
-                type_str = prop_spec.get('type', 'string')
 
-                def type_for_str(type_str_):
-                    if type_str_ in TYPES:
-                        return TYPES[type_str_]
-                    else:
-                        return Raw
-
-                if type_str == 'array':
-                    items_type_str = prop_spec.get('items', {}).get('type', 'string')
-                    items_type = type_for_str(items_type_str)
-                    type_ = ArrayItemType(items_type)
-                else:
-                    type_ = type_for_str(type_str)
-
-                model.properties.append(Param(
-                    name=prop_name,
-                    param_type='json-post',
-                    type_=type_,
-                    required=prop_spec.get('required', False),
-                    description=prop_spec.get('description', '')
-                ))
-
-                return_models[name] = model
-
-        return return_models
-
-    _endpoint_by_method_url_cache: FileCache[Tuple[str, str], Dict[str, Any]]
+    _endpoint_by_method_url_cache: FileCache[Tuple[str, str], EndpointToCache]
     _url_by_method_cache: FileCache[str, List[SwaggerUrl]]
     _time_cache: FileCache[Literal['TIME'], float]
 
-    def __init__(self, swagger_test_data: Optional[dict] = None):
-        # self._endpoints = []
-        self._endpoint_by_method_url_cache = FileCache('endpoint_by_method_url_cache')
-        self._url_by_method_cache = FileCache('url_by_method_cache')
-        self._time_cache = FileCache('time_cache')
-
-        if swagger_test_data is None:
-            swagger_dir = os.path.join(os.environ['HOME'], '.carl', 'swagger')
-            swagger_files = [os.path.join(swagger_dir, f) for f in os.listdir(swagger_dir)]
-
-            cache_time = self._time_cache.get('TIME', 0)
-            yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
-            if yaml_files_time > cache_time:
-                self.clear_all_caches()
-                self._load_swagger_data(swagger_files=swagger_files)
-                self._time_cache['TIME'] = datetime.now().timestamp()
+    def __init__(self, files: Optional[List[str]] = None, ephemeral: bool = False):
+        if not ephemeral:
+            self._endpoint_by_method_url_cache = FileCachePydantic('endpoint_by_method_url_cache', EndpointToCache)
+            self._url_by_method_cache = FileCacheJson('url_by_method_cache')
+            self._time_cache = FileCacheJson('time_cache')
         else:
             # this is a testing case, so make all caches are ephemeral
+            # TODO: we should probably be caching to a temp dir instead of ephemera for testing
             self._endpoint_by_method_url_cache = cast(FileCache, {})
             self._url_by_method_cache = cast(FileCache, {})
             self._time_cache = cast(FileCache, {})
 
-            self._load_swagger_data(swagger_data=swagger_test_data)
+        if files is None:
+            swagger_dir = os.path.join(os.environ['HOME'], '.carl', 'swagger')
+            swagger_files = [os.path.join(swagger_dir, f) for f in os.listdir(swagger_dir)]
+        else:
+            swagger_files = files
+
+        cache_time = self._time_cache.get('TIME', 0)
+        yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
+        if yaml_files_time > cache_time:
+            self.clear_all_caches()
+            self._load_swagger_data(swagger_files=swagger_files)
+            self._time_cache['TIME'] = datetime.now().timestamp()
 
     def clear_all_caches(self) -> None:
         self._endpoint_by_method_url_cache.clear()
         self._url_by_method_cache.clear()
         self._time_cache.clear()
 
-    def _load_swagger_data(self, swagger_files: Optional[Iterable[str]] = None,
-                           swagger_data: Optional[Dict[str, Any]] = None):
-        multi_swagger_data: List[Dict[str, Any]] = []
+    def _load_swagger_data(self, swagger_files: Optional[Iterable[str]]):
+        multi_swagger_data: List[OpenAPI] = []
         if swagger_files is not None:
             for file in swagger_files:
                 with open(file, 'r') as fh:
                     loaded = yaml.safe_load(fh)
                     if loaded is not None:
-                        multi_swagger_data.append(loaded)
+                        loaded = replace_json_refs(loaded, merge_props=True)
+                        multi_swagger_data.append(OpenAPI.parse_obj(loaded))
                     else:
-                        raise Exception(f"Issue with Swagger file {file!r}")
-        elif swagger_data is not None:
-            multi_swagger_data = [swagger_data]
-        else:
-            raise Exception(f"One of 'swagger_files' or 'swagger_data' is required")
+                        # At certain times we should fail more loudly here
+                        pass
+
         urls_by_method: MutableMapping[str, List[SwaggerUrl]] = defaultdict(list)
         for swagger_data_ in multi_swagger_data:
-            base_path = swagger_data_['basePath']
-            if 'models' in swagger_data_:
-                models_data = swagger_data_['models']
-            else:
-                models_data = {}
-            for api in swagger_data_['apis']:
-                endpoint_url = base_path + api['path']
-                for op in api['operations']:
-                    method = op['method']
-                    parameters = op['parameters']
-                    summary: Optional[str] = op.get('summary')
-                    swagger_endpoint_dict = {
-                        'url': endpoint_url, 'method': method,
-                        'swagger_param_data': parameters, 'swagger_models_data': models_data,
-                    }
-                    self._endpoint_by_method_url_cache[method, endpoint_url] = swagger_endpoint_dict
-                    urls_by_method[op['method']].append(SwaggerUrl(
-                        url=endpoint_url,
-                        summary=summary
-                    ))
+            if swagger_data_.paths:
+                server_urls = [s.url for s in swagger_data_.servers]
+                for path_str, path_spec in swagger_data_.paths.items():
+                    # Note: this doesn't deal with relative servers, we might need to deal with that
+                    # when fetching the spec
+                    if path_spec.servers:
+                        server_urls_for_path = [s.url for s in swagger_data_.servers]
+                    else:
+                        server_urls_for_path = server_urls
 
-            for method, urls in urls_by_method.items():
-                self._url_by_method_cache[method] = urls
+                    for method in METHODS:
+                        operation: Operation = getattr(path_spec, method)
+                        if operation:
+                            summary = operation.summary
+                            parameters: List[CarlParam] = []
+                            for parameter in operation.parameters or []:
+                                if isinstance(parameter, Parameter):
+                                    param_type = self.schema_to_arg_type(parameter.param_schema)
+                                    parameters.append(CarlParam(
+                                        name=parameter.name,
+                                        param_type=ParamType(parameter.param_in),
+                                        description=parameter.description,
+                                        required_=parameter.required,
+                                        type_=param_type
+                                    ))
+                                else:  # is a Reference
+                                    # Hopefully we have already resolved the references
+                                    pass
+                            if operation.requestBody and isinstance(operation.requestBody, RequestBody):
+                                params_from_body = self._get_params_from_body(operation.requestBody)
+                                parameters.extend(params_from_body)
+
+                            for server_url in server_urls_for_path:
+                                endpoint_url = server_url + path_str
+                                self._endpoint_by_method_url_cache[method, endpoint_url] = EndpointToCache(
+                                    endpoint_url=endpoint_url,
+                                    method=method,
+                                    parameters=parameters
+                                )
+                                urls_by_method[method].append(SwaggerUrl(
+                                    url=endpoint_url,
+                                    summary=summary
+                                ))
+
+        for method, urls in urls_by_method.items():
+            self._url_by_method_cache[method] = urls
+
+    @staticmethod
+    def schema_to_arg_type(schema: Union[Schema, Reference, None]) -> ArgTypeModel:
+        if schema is None or isinstance(schema, Reference):
+            return ArgTypeModel(type_=ArgTypeEnum.string)
+        schema_type = schema.type
+        schema_items = schema.items
+        if schema_type is None or schema_type == []:
+            # default
+            return ArgTypeModel(type_=ArgTypeEnum.string)
+        else:
+            schema_type_: str
+            if isinstance(schema_type, List):
+                # don't know how to handle multiple types yet
+                schema_type_ = schema_type[0]
+            else:
+                schema_type_ = schema_type
+
+            if schema_type_ == SpecialSwaggerTypeStrs.object:
+                return ArgTypeModel(type_=ArgTypeEnum.json)
+            elif schema_type_ == SpecialSwaggerTypeStrs.array:
+                if schema_items is None or isinstance(schema_items, Reference):
+                    return ArgTypeModel(type_=ArgTypeEnum.string, is_array=True)
+                else:
+                    items_type = SwaggerRepo.schema_to_arg_type(Schema(
+                        type=schema_items.type,
+                        items=None
+                    ))
+                    if items_type.is_array:
+                        return ArgTypeModel(
+                            type_=ArgTypeEnum.json,
+                            is_array=True
+                        )
+                    else:
+                        return ArgTypeModel(
+                            type_=items_type.type_,
+                            is_array=True
+                        )
+            else:
+                arg_type_enum = ArgTypeEnum(schema_type_)
+                return ArgTypeModel(
+                    type_=arg_type_enum,
+                    is_array=False
+                )
+
+    def _get_params_from_body(self, request_body: RequestBody) -> Iterable[CarlParam]:
+        if 'application/json' in request_body.content:
+            schema = request_body.content['application/json'].media_type_schema
+            if isinstance(schema, Schema) and schema.type == SpecialSwaggerTypeStrs.object and schema.properties:
+                if schema.required is not None:
+                    required_props = set(schema.required)
+                else:
+                    required_props = set()
+                for prop_name, prop_schema in schema.properties.items():
+                    carl_param_type = self.schema_to_arg_type(prop_schema)
+                    if isinstance(prop_schema, Schema):
+                        description = prop_schema.description
+                    else:
+                        description = None
+
+                    yield CarlParam(
+                        name=prop_name,
+                        param_type=ParamType.json_body,
+                        description=description,
+                        required_=(prop_name in required_props),
+                        type_=carl_param_type
+                    )
+            else:
+                # Can't handle these yet
+                pass
+        else:
+            # Can't handle anything else yet
+            pass
 
     def get_endpoint_for_url(self, url: str, method: str = 'GET') -> SwaggerEndpoint:
-        swagger_endpoint_dict = self._endpoint_by_method_url_cache[method, url]
-        swagger_models = self.models_from_data(swagger_endpoint_dict['swagger_models_data'])
+        swagger_endpoint_cached = self._endpoint_by_method_url_cache[method, url]
         return SwaggerEndpoint(
-            url=swagger_endpoint_dict['url'],
-            method=swagger_endpoint_dict['method'],
-            swagger_param_data=swagger_endpoint_dict['swagger_param_data'],
-            swagger_models=swagger_models
+            url=swagger_endpoint_cached.endpoint_url,
+            method=swagger_endpoint_cached.method,
+            parameters=swagger_endpoint_cached.parameters
         )
 
     def get_urls_for_method(self, method: str) -> Iterable[SwaggerUrl]:
@@ -331,11 +440,11 @@ def cli_args_to_cmd(cli_args: Sequence[str], swagger_model: Optional[SwaggerRepo
 
     url_template = generic_args.url
 
-    param_args = param_args_to_pairs(param_args)
-    cache_param_arg_pairs(param_args)
-    headers, param_args = format_headers(param_args, endpoint.params)
-    post_data, param_args = format_post_data(param_args, endpoint.params)
-    url = format_url(url_template, param_args)
+    param_arg_pairs = param_args_to_pairs(param_args)
+    cache_param_arg_pairs(param_arg_pairs)
+    headers, param_arg_pairs = format_headers(param_arg_pairs, endpoint.params)
+    post_data, param_arg_pairs = format_post_data(param_arg_pairs, endpoint.params)
+    url = format_url(url_template, param_arg_pairs)
 
     return ['curl', '-X', generic_args.method, url, *headers, *post_data, *remaining_curl_args], generic_args
 
@@ -345,7 +454,7 @@ ArgPairs = List[Tuple[str, ArgValue]]
 
 MAX_HISTORY = 200
 
-arg_cache = FileCache('args')
+arg_cache: FileCacheJson = FileCacheJson('args')
 
 
 def cache_param_arg_pairs(param_args: ArgPairs) -> None:
@@ -362,13 +471,13 @@ def format_post_data(param_args: ArgPairs, endpoint_params: EndpointParams) -> T
 
     for arg_name, arg_value in param_args:
         for param in endpoint_params[arg_name]:
-            if param.param_type == 'json-post':
+            if param.param_type == ParamType.json_body:
                 def process_raws(arg_value_):
                     if isinstance(arg_value_, Raw):
                         try:
                             return json.loads(arg_value_.value)
                         except json.decoder.JSONDecodeError:
-                            raise Exception('Unimplemeted')
+                            raise NotImplementedError()
                     else:
                         return arg_value_
 
@@ -396,7 +505,7 @@ def format_headers(param_args: ArgPairs, endpoint_params: EndpointParams) -> Tup
     headers: List[str] = []
     for arg_name, arg_value in param_args:
         for param in endpoint_params[arg_name]:
-            if param.param_type == 'header':
+            if param.param_type == ParamType.header:
                 headers.extend(['-H', f"{param.name}: {arg_value}"])
                 break
         else:
@@ -465,24 +574,15 @@ def add_args_from_params(parser: argparse.ArgumentParser, endpoint: SwaggerEndpo
             print(f"Warning: Parameter +{param.name} appears twice", file=sys.stderr)
         else:
             arg_deduper.add(param.name)
-            parser.add_argument(f"+{param.name}", type=ParamArg(param).type_, required=param.required, nargs="+")
+            parser.add_argument(f"+{param.name}", type=ParamArg(param).type_, required=param.required_, nargs="+")
 
     return parser
 
 
 def parse_generic_args(cli_args: Sequence[str]) -> Tuple[argparse.Namespace, Sequence[str]]:
-    @click.command()
-    @click.argument('url')
-    @click.option('-X', '--method', type=click.Choice(METHODS), default='GET')
-    @click.option('-p', '--print-cmd', is_flag=True, default=False)
-    @click.option('-n', '--no-run-cmd', is_flag=True, default=True, help='Do not execute the command')
-    def parse_generic_args(url: str, method: str, print_cmd: bool, no_run_cmd: bool):
-        """Parses generic arguments for HTTP requests"""
-        generic_args = (url, method, print_cmd, no_run_cmd)
-        return generic_args
     parser = argparse.ArgumentParser(prefix_chars='-+')
     parser.add_argument('url')
-    parser.add_argument('-X', '--method', choices=METHODS, default='GET')
+    parser.add_argument('-X', '--method', choices=METHODS, default='get', type=str.lower)
     parser.add_argument('-p', '--print-cmd', action='store_true', default=False)
     parser.add_argument('-n', '--no-run-cmd', action='store_false', dest='run_cmd', default=True)
     generic_args, remaining_args = parser.parse_known_args(cli_args)

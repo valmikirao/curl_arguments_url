@@ -3,9 +3,6 @@
 function _carl {
 	local line
 	_arguments -C '-X:method:(GET POST PUT DELETE PATCH)' '1:url:{_carl_url}' '*::parameter:{_carl_params}'
-	# echo
-	# echo context=$context state=$state state_descr=$state_descr line=$line
-	# sleep 5
 }
 
 function _carl_utils {
@@ -14,7 +11,7 @@ function _carl_utils {
 
 function _carl_url {
     local -a values
-    values=("${(@f)$(_carl_utils urls $opt_args[-X] --format '{colon_escaped_url}:{summary}')}")
+    values=("${(@f)$(_carl_utils zsh-describe-urls-args $opt_args[-X])}")
     if [[ "$values" ]]; then
 	    _describe 'url' values
 	fi
@@ -29,7 +26,7 @@ function _carl_params {
 		param_args=(-X $opt_args[-X])
 	fi
 
-    arguments=("${(@f)$(_carl_utils params  "$param_args[@]" --format '+{param}[{description}]:value:{{_carl_param_values\ {param}}}' "$(printf '%b' $url)")}")
+    arguments=("${(@f)$(_carl_utils params  "$param_args[@]" --format '+{param}[{description}]:value:{{_carl_param_values {param}}}' "$(printf '%b' $url)")}")
 	if [[ "$arguments" ]]; then
         _arguments $arguments
     fi

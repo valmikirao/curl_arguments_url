@@ -11,12 +11,15 @@ def main():
     subparsers = parser.add_subparsers(dest='cmd')
 
     url_cmd = subparsers.add_parser('urls')
-    url_cmd.add_argument('method', default='GET', nargs='?', choices=METHODS)
+    url_cmd.add_argument('method', default='get', nargs='?', choices=METHODS, type=str.lower)
     url_cmd.add_argument('-f', '--format', default='{url}')
+
+    url_cmd = subparsers.add_parser('zsh-describe-urls-args')
+    url_cmd.add_argument('method', default='get', nargs='?', choices=METHODS, type=str.lower)
 
     params_cmd = subparsers.add_parser('params')
     params_cmd.add_argument('url')
-    params_cmd.add_argument('-X', '--method', default='GET')
+    params_cmd.add_argument('-X', '--method', default='get', choices=METHODS, type=str.lower)
     params_cmd.add_argument('-f', '--format', default='{param}')
 
     param_vals_cmd = subparsers.add_parser('param-values')
@@ -25,7 +28,19 @@ def main():
 
     args = parser.parse_args()
 
-    if args.cmd == 'urls':
+    if args.cmd == 'zsh-describe-urls-args':
+        swagger_urls = swagger_model.get_urls_for_method(args.method)
+        for swagger_url in swagger_urls:
+            url = swagger_url.url
+            colon_escaped_url = url.replace(':', r'\:')
+            summary = swagger_url.summary
+
+            if summary:
+                print(f"{colon_escaped_url}:{summary}")
+            else:
+                print(colon_escaped_url)
+
+    elif args.cmd == 'urls':
         swagger_urls = swagger_model.get_urls_for_method(args.method)
         format_template = args.format
         for swagger_url in swagger_urls:
