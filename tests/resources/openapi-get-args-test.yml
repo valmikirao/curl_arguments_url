@@ -1,4 +1,7 @@
 openapi: 3.0.0
+info:
+    title: Testing Spec
+    version: 0.0.1
 servers:
   - url: fake.com
 paths:
@@ -8,4 +11,75 @@ paths:
         - name: foo
           in: query
           schema:
-              type: string
+              type: array
+              items:
+                type: string
+
+  /{thing}/do:
+    get:
+      parameters:
+        - name: thing
+          in: path
+        - name: bang
+          in: query
+  /{bad-thing}/do:
+    get:
+      parameters:
+        - name: bang
+          in: query
+  /need/a/header/{for}/this:
+    get:
+      parameters:
+        - name: header_param
+          in: header
+        - name: still_querying
+          in: query
+          schema:
+            type: string
+  /dashed/arg/name:
+    get:
+      parameters:
+        - name: Lots-O-Dashes
+          in: query
+  /posting/stuff:
+    post:
+      requestBody:
+        content:
+          application/json:
+            media_type_schema:
+              type: object
+              properties:
+                arg_one:
+                  type: string
+                arg_two:
+                  type: integer
+  /posting/raw/stuff:
+    post:
+      requestBody:
+        content:
+          application/json:
+            media_type_schema:
+              type: object
+              properties:
+                arg_list:
+                  type: array
+                  items:
+                    type: string
+                arg_list_int:
+                  type: array
+                  items:
+                    type: integer
+                arg_nested:
+                  type: object
+                  properties:
+                    A:
+                      type: integer
+                    B:
+                      type: integer
+                array_nested:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: integer
+

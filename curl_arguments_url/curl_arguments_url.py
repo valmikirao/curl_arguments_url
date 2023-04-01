@@ -14,12 +14,14 @@ from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Opt
     Set, MutableMapping, cast, Type
 
 from jsonref import replace_refs as replace_json_refs  # type: ignore
-from openapi_schema_pydantic import OpenAPI, Operation, Parameter, RequestBody, Schema, Reference
+from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter
 from pydantic import BaseModel, validator
 from typing_extensions import Literal
 from urllib.parse import urlencode
 
 import yaml
+
+REMAINING_ARG = 'passed_to_curl'
 
 CARL_DIR = os.path.join(os.environ["HOME"], '.carl')
 
@@ -100,21 +102,6 @@ class FileCachePydantic(FileCache[T, V]):
     def thaw(self, frozen_value: str) -> V:
         # TODO: Is there a better way to do this than cast()?
         return cast(V, cast(BaseModel, self._model).parse_raw(frozen_value))
-
-
-class Raw(NamedTuple):
-    value: str
-
-
-class ArrayItem(NamedTuple):
-    item: Any
-
-
-class ArrayItemType(NamedTuple):
-    type_: Callable[[Any], Any]
-
-    def __call__(self, item: str) -> ArrayItem:
-        return ArrayItem(self.type_(item))
 
 
 def boolean_type(val: Optional[str]) -> bool:
@@ -305,7 +292,7 @@ class SwaggerRepo:
                         server_urls_for_path = server_urls
 
                     for method in METHODS:
-                        operation: Operation = getattr(path_spec, method)
+                        operation: Optional[Operation] = getattr(path_spec, method)
                         if operation:
                             summary = operation.summary
                             parameters: List[CarlParam] = []
@@ -322,7 +309,7 @@ class SwaggerRepo:
                                 else:  # is a Reference
                                     # Hopefully we have already resolved the references
                                     pass
-                            if operation.requestBody and isinstance(operation.requestBody, RequestBody):
+                            if isinstance(operation.requestBody, RequestBody):
                                 params_from_body = self._get_params_from_body(operation.requestBody)
                                 parameters.extend(params_from_body)
 
@@ -386,33 +373,34 @@ class SwaggerRepo:
                 )
 
     def _get_params_from_body(self, request_body: RequestBody) -> Iterable[CarlParam]:
-        if 'application/json' in request_body.content:
-            schema = request_body.content['application/json'].media_type_schema
-            if isinstance(schema, Schema) and schema.type == SpecialSwaggerTypeStrs.object and schema.properties:
-                if schema.required is not None:
-                    required_props = set(schema.required)
-                else:
-                    required_props = set()
-                for prop_name, prop_schema in schema.properties.items():
-                    carl_param_type = self.schema_to_arg_type(prop_schema)
-                    if isinstance(prop_schema, Schema):
-                        description = prop_schema.description
+        for json_mime_type in ('application/json', 'json'):
+            if json_mime_type in request_body.content:
+                schema = request_body.content[json_mime_type].media_type_schema
+                if isinstance(schema, Schema) and schema.type == SpecialSwaggerTypeStrs.object and schema.properties:
+                    if schema.required is not None:
+                        required_props = set(schema.required)
                     else:
-                        description = None
+                        required_props = set()
+                    for prop_name, prop_schema in schema.properties.items():
+                        carl_param_type = self.schema_to_arg_type(prop_schema)
+                        if isinstance(prop_schema, Schema):
+                            description = prop_schema.description
+                        else:
+                            description = None
 
-                    yield CarlParam(
-                        name=prop_name,
-                        param_type=ParamType.json_body,
-                        description=description,
-                        required_=(prop_name in required_props),
-                        type_=carl_param_type
-                    )
+                        yield CarlParam(
+                            name=prop_name,
+                            param_type=ParamType.json_body,
+                            description=description,
+                            required_=(prop_name in required_props),
+                            type_=carl_param_type
+                        )
+                else:
+                    # Can't handle these yet
+                    pass
             else:
-                # Can't handle these yet
+                # Can't handle anything else yet
                 pass
-        else:
-            # Can't handle anything else yet
-            pass
 
     def get_endpoint_for_url(self, url: str, method: str = 'GET') -> SwaggerEndpoint:
         swagger_endpoint_cached = self._endpoint_by_method_url_cache[method, url]
@@ -427,29 +415,70 @@ class SwaggerRepo:
             yield SwaggerUrl(*item)
 
 
+class GenericArgs(NamedTuple):
+    print_cmd: bool
+    run_cmd: bool
+
+
 def cli_args_to_cmd(cli_args: Sequence[str], swagger_model: Optional[SwaggerRepo] = None)\
-      -> Tuple[Sequence[str], argparse.Namespace]:
-    generic_args, remaining_args = parse_generic_args(cli_args)
+      -> Tuple[Sequence[str], GenericArgs]:
+    initial_parser = argparse.ArgumentParser(add_help=False)
+    initial_parser.add_argument('url', nargs="?")
+    initial_parser.add_argument('-h', '--help', action='store_true')
+    initial_parser = add_generic_args(initial_parser)
+
+    initial_args, _ = initial_parser.parse_known_args(cli_args)
+    if initial_args.url is None:
+        # Asked for help, but no url, or just forgot the url, so this should print the correct help/error message
+        help_out_parser = argparse.ArgumentParser(add_help=True)
+        help_out_parser.add_argument('url')
+        help_out_parser = add_generic_args(help_out_parser)
+        help_out_parser.parse_args(cli_args)
+
+        raise AssertionError('We should not get here, the above .parse_args() should print help and exit')
+
+    method: str = initial_args.method.lower()
 
     if swagger_model is None:
         swagger_model = SwaggerRepo()
 
-    endpoint = swagger_model.get_endpoint_for_url(generic_args.url, generic_args.method)
+    correct_url_parser = argparse.ArgumentParser(add_help=False)
+    possible_urls = [u.url for u in swagger_model.get_urls_for_method(method)]
+    correct_url_parser.add_argument('url', choices=possible_urls)
+    correct_url_parser = add_generic_args(correct_url_parser)
+    # this sees if the url supplied makes sense, and prints correct error if it doesn't
+    correct_url_parser.parse_known_args(cli_args)
 
-    param_args, remaining_curl_args = parse_param_args(endpoint, remaining_args)
+    url_template: str = initial_args.url
+    full_parser = argparse.ArgumentParser(add_help=True,)
+    full_parser = add_generic_args(full_parser)
+    url_subparser = full_parser.add_subparsers(dest='url')
+    given_url_subparser = url_subparser.add_parser(url_template,  prefix_chars='-+')
 
-    url_template = generic_args.url
+    endpoint = swagger_model.get_endpoint_for_url(url_template, method)
+    given_url_subparser = add_args_from_params(given_url_subparser, endpoint)
+    given_url_subparser.add_argument(REMAINING_ARG, nargs='*')
 
-    param_arg_pairs = param_args_to_pairs(param_args)
+    args = full_parser.parse_args(cli_args)
+    remaining: List[str] = args.__dict__.pop(REMAINING_ARG, [])
+    param_arg_pairs = param_args_to_pairs(args)
+
     cache_param_arg_pairs(param_arg_pairs)
     headers, param_arg_pairs = format_headers(param_arg_pairs, endpoint.params)
     post_data, param_arg_pairs = format_post_data(param_arg_pairs, endpoint.params)
     url = format_url(url_template, param_arg_pairs)
 
-    return ['curl', '-X', generic_args.method, url, *headers, *post_data, *remaining_curl_args], generic_args
+    method_: str = args.method.upper()
+
+    generic_args = GenericArgs(
+        print_cmd=args.print_cmd,
+        run_cmd=args.run_cmd
+    )
+
+    return ['curl', '-X', method_, url, *headers, *post_data, *remaining], generic_args
 
 
-ArgValue = Union[str, int, float]
+ArgValue = Union[str, int, float, Dict[str, 'ArgValue'], List['ArgValue']]
 ArgPairs = List[Tuple[str, ArgValue]]
 
 MAX_HISTORY = 200
@@ -472,22 +501,13 @@ def format_post_data(param_args: ArgPairs, endpoint_params: EndpointParams) -> T
     for arg_name, arg_value in param_args:
         for param in endpoint_params[arg_name]:
             if param.param_type == ParamType.json_body:
-                def process_raws(arg_value_):
-                    if isinstance(arg_value_, Raw):
-                        try:
-                            return json.loads(arg_value_.value)
-                        except json.decoder.JSONDecodeError:
-                            raise NotImplementedError()
-                    else:
-                        return arg_value_
-
-                if isinstance(arg_value, ArrayItem):
+                if param.type_.is_array:
                     if arg_name not in post_data:
-                        post_data[arg_name] = [process_raws(arg_value.item)]
+                        post_data[arg_name] = [arg_value]
                     else:
-                        post_data[arg_name].append(process_raws(arg_value.item))
+                        post_data[arg_name].append(arg_value)
                 else:
-                    post_data[arg_name] = process_raws(arg_value)
+                    post_data[arg_name] = arg_value
                 break
         else:
             remaining_argpairs.append((arg_name, arg_value),)
@@ -538,11 +558,15 @@ def format_url(url_template: str, param_args: ArgPairs) -> str:
 
 def param_args_to_pairs(param_args: argparse.Namespace) -> ArgPairs:
     args_pairs: ArgPairs = []
-    param_values: List[ParamArg]
+    param_values: List[Any]
     for _, param_values in param_args.__dict__.items():
-        if param_values and len(param_values) and len(param_values[0].values):
-            key = param_values[0].param.name  # this is the true name, without argparse munging
-            for val in param_values[0].values:  # using values[0] because of ParamArg weirdness
+        if isinstance(param_values, List) and len(param_values) >= 1:
+            param_value = param_values[0]  # using values[0] because of ParamArg weirdness
+        else:
+            param_value = param_values
+        if isinstance(param_value, ParamArg) and len(param_value.values):
+            key = param_value.param.name  # this is the true name, without argparse munging
+            for val in param_value.values:
                 args_pairs.append((key, val),)
 
     return args_pairs
@@ -567,27 +591,46 @@ def parse_param_args(endpoint: SwaggerEndpoint, remaining_args: Sequence[str]) \
     return param_args, remaining_curl_args
 
 
-def add_args_from_params(parser: argparse.ArgumentParser, endpoint: SwaggerEndpoint, arg_deduper: Set[str]) \
+def add_args_from_params(parser: argparse.ArgumentParser, endpoint: SwaggerEndpoint) \
       -> argparse.ArgumentParser:
+    arg_deduper: Set[str] = set()
     for param in endpoint.list_params():
         if param.name in arg_deduper:
             print(f"Warning: Parameter +{param.name} appears twice", file=sys.stderr)
         else:
             arg_deduper.add(param.name)
-            parser.add_argument(f"+{param.name}", type=ParamArg(param).type_, required=param.required_, nargs="+")
+            nargs: Optional[str] = '+' if param.type_.is_array else None
+            parser.add_argument(f"+{param.name}", type=ParamArg(param).type_, required=param.required_, nargs=nargs,
+                                help=param.description)
 
     return parser
 
 
-def parse_generic_args(cli_args: Sequence[str]) -> Tuple[argparse.Namespace, Sequence[str]]:
-    parser = argparse.ArgumentParser(prefix_chars='-+')
-    parser.add_argument('url')
-    parser.add_argument('-X', '--method', choices=METHODS, default='get', type=str.lower)
-    parser.add_argument('-p', '--print-cmd', action='store_true', default=False)
-    parser.add_argument('-n', '--no-run-cmd', action='store_false', dest='run_cmd', default=True)
-    generic_args, remaining_args = parser.parse_known_args(cli_args)
+ArgParserArgAction = Literal['store_true', 'store_false']  # will add other actions as needed
 
-    return generic_args, remaining_args
+
+class ArgParserArg(NamedTuple):
+    name_or_flags: List[str]
+    kwargs: Dict[str, Any]
+    value_description: Optional[str] = None
+
+
+GENERIC_ARGS = [
+    ArgParserArg(['-X', '--method'], dict(choices=METHODS, default='get', type=str.lower,
+                                          help='Method used for the curl command and for completing the possible'
+                                               ' urls'),
+                 value_description='method'),
+    ArgParserArg(['-p', '--print-cmd'], dict(action='store_true', default=False,
+                                             help='Print the resulting curl command to standard out')),
+    ArgParserArg(['-n', '--no-run'], dict(action='store_false', dest='run_cmd', default=True,
+                                          help='Don\'t run the curl command.  Useful with -p'))
+]
+
+
+def add_generic_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    for arg in GENERIC_ARGS:
+        parser.add_argument(*arg.name_or_flags, **arg.kwargs)
+    return parser
 
 
 def get_param_values(param_name: str) -> Iterable[str]:

@@ -1,8 +1,9 @@
 #compdef _carl carl
 
 function _carl {
-	local line
-	_arguments -C '-X:method:(GET POST PUT DELETE PATCH)' '1:url:{_carl_url}' '*::parameter:{_carl_params}'
+	local -a arguments
+	arguments=("${(@f)$(_carl_utils zsh-arguments-base-args)}")
+	_arguments -C "$arguments[@]"
 }
 
 function _carl_utils {
@@ -18,18 +19,22 @@ function _carl_url {
 }
 
 function _carl_params {
-	local url param_args
-    local -a arguments
+	local url param_args method
+  local -a arguments
 
-	url=$(bash -c 'echo '$line[1])
+	url="$(zsh -c "echo $line[1]")"  # the `zsh -c ...` de-escapes the url
 	if [[ $opt_args[-X] ]]; then
-		param_args=(-X $opt_args[-X])
+		method=$opt_args[-X]
+	elif [[ $opt_args[--method] ]]; then
+	  method=$opt_args[--method]
+	else
+	  method=get
 	fi
 
-    arguments=("${(@f)$(_carl_utils params  "$param_args[@]" --format '+{param}[{description}]:value:{{_carl_param_values {param}}}' "$(printf '%b' $url)")}")
+  arguments=("${(@f)$(_carl_utils zsh-arguments-params-args "$method" "$url")}")
 	if [[ "$arguments" ]]; then
-        _arguments $arguments
-    fi
+    _arguments "$arguments[@]"
+  fi
 }
 
 function _carl_param_values {
