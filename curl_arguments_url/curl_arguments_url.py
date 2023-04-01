@@ -24,6 +24,10 @@ import yaml
 REMAINING_ARG = 'passed_to_curl'
 
 CARL_DIR = os.path.join(os.environ["HOME"], '.carl')
+SWAGGER_DIR = os.environ.get(
+    'CARL_SWAGGER_DIR',
+    os.path.join(CARL_DIR, 'swagger')
+)
 
 METHODS: List[str] = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']
 
@@ -190,7 +194,7 @@ class SwaggerModel(NamedTuple):
 
 class SwaggerUrl(NamedTuple):
     url: str
-    summary: Optional[str]
+    description: Optional[str]
 
 
 class EndpointToCache(BaseModel):
@@ -230,6 +234,32 @@ class SwaggerEndpoint:
                 yield param
 
 
+DISPLAY_DESCRIPTION_IDEAL_LENGTH = 100
+
+def get_displayed_description(description: Optional[str], summary: Optional[str]) -> Optional[str]:
+    def _ranker(candidate: Optional[str]) -> Tuple[int, int]:
+        if candidate is None or candidate == '':
+            # discard those that don't exist
+            return 0, 0
+        elif len(candidate) <= DISPLAY_DESCRIPTION_IDEAL_LENGTH:
+            # the longest one under X chars
+            return 2, len(candidate)
+        else:
+            # the shortest one above X chars
+            return 1, -len(candidate)
+
+    return_val: Optional[str] = None
+    current_max_rank = (0, 0)
+    for val in (description, summary):
+        val_rank = _ranker(val)
+        if val_rank > current_max_rank:
+            return_val = val
+            current_max_rank = val_rank
+
+    return return_val
+
+
+
 class SwaggerRepo:
 
     _endpoint_by_method_url_cache: FileCache[Tuple[str, str], EndpointToCache]
@@ -249,8 +279,7 @@ class SwaggerRepo:
             self._time_cache = cast(FileCache, {})
 
         if files is None:
-            swagger_dir = os.path.join(os.environ['HOME'], '.carl', 'swagger')
-            swagger_files = [os.path.join(swagger_dir, f) for f in os.listdir(swagger_dir)]
+            swagger_files = [os.path.join(SWAGGER_DIR, f) for f in os.listdir(SWAGGER_DIR)]
         else:
             swagger_files = files
 
@@ -291,10 +320,14 @@ class SwaggerRepo:
                     else:
                         server_urls_for_path = server_urls
 
+                    path_description = get_displayed_description(
+                        description=path_spec.description,
+                        summary=path_spec.summary
+                    )
+
                     for method in METHODS:
                         operation: Optional[Operation] = getattr(path_spec, method)
                         if operation:
-                            summary = operation.summary
                             parameters: List[CarlParam] = []
                             for parameter in operation.parameters or []:
                                 if isinstance(parameter, Parameter):
@@ -320,9 +353,17 @@ class SwaggerRepo:
                                     method=method,
                                     parameters=parameters
                                 )
+
+                                op_description = get_displayed_description(
+                                    description=operation.description,
+                                    summary=operation.summary
+                                )
+                                if op_description is None or op_description == '':
+                                    op_description = path_description
+
                                 urls_by_method[method].append(SwaggerUrl(
                                     url=endpoint_url,
-                                    summary=summary
+                                    description=op_description
                                 ))
 
         for method, urls in urls_by_method.items():
@@ -411,7 +452,7 @@ class SwaggerRepo:
         )
 
     def get_urls_for_method(self, method: str) -> Iterable[SwaggerUrl]:
-        for item in self._url_by_method_cache.get(method, []):
+        for item in self._url_by_method_cache.get(method.lower(), []):
             yield SwaggerUrl(*item)
 
 
@@ -579,9 +620,8 @@ def parse_param_args(endpoint: SwaggerEndpoint, remaining_args: Sequence[str]) \
     See https://swagger.io/docs/specification/describing-parameters/ for what the possibilities really are
     """
     parser = argparse.ArgumentParser(prefix_chars='-+')
-    arg_deduper: Set[str] = set()
 
-    parser = add_args_from_params(parser, endpoint, arg_deduper)
+    parser = add_args_from_params(parser, endpoint)
     param_args, still_remaining_args = parser.parse_known_args(remaining_args)
 
     curl_parser = argparse.ArgumentParser()
@@ -599,7 +639,7 @@ def add_args_from_params(parser: argparse.ArgumentParser, endpoint: SwaggerEndpo
             print(f"Warning: Parameter +{param.name} appears twice", file=sys.stderr)
         else:
             arg_deduper.add(param.name)
-            nargs: Optional[str] = '+' if param.type_.is_array else None
+            nargs: Union[int, Literal['+']] = '+' if param.type_.is_array else 1
             parser.add_argument(f"+{param.name}", type=ParamArg(param).type_, required=param.required_, nargs=nargs,
                                 help=param.description)
 

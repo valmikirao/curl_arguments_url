@@ -1,23 +1,10 @@
 #!/usr/bin/env python
 
 """Tests for `curl_arguments_url` package."""
-import os
 
 import pytest
 
-
-from curl_arguments_url.curl_arguments_url import cli_args_to_cmd, parse_param_args, SwaggerEndpoint, CarlParam, \
-    SwaggerRepo
-
-
-@pytest.fixture()
-def swagger_model():
-    content_root = __file__
-    for _ in (1, 2):
-        # content root is this file dirs parent di
-        content_root, _ = os.path.split(content_root)
-    openapi_file = os.path.join(content_root, 'tests', 'resources', 'openapi-get-args-test.yml')
-    return SwaggerRepo(files=[openapi_file], ephemeral=True)
+from curl_arguments_url.curl_arguments_url import cli_args_to_cmd, parse_param_args, SwaggerEndpoint, CarlParam
 
 
 @pytest.mark.parametrize('args,expected_cmd', [
@@ -64,7 +51,6 @@ def test_cli_args_to_cmd_utl(swagger_model, args, expected_cmd):
     assert cmd == expected_cmd
 
 
-@pytest.mark.skip
 def test_parse_param_args():
     # this specificall tests being able to have a .remaining arg
     class MockSwaggerEndpoint(SwaggerEndpoint):
@@ -87,24 +73,3 @@ def test_parse_param_args():
     assert args.remaining[0].values == ["otherthings"]
 
     assert curl_args == ['-H', 'cookie']
-
-
-@pytest.mark.skip
-@pytest.mark.parametrize('param_data,swagger_models,expected_params', [
-    # Param(name, param_type, description, required, type_)
-    # ({'name': 'a-name', 'paramType': 'query'}, {}, [CarlParam('a-name', 'query', '', False, str)]),
-    # ({'name': 'b-name', 'paramType': 'path', 'description': 'Boring description', 'required': True, 'type': 'integer'},
-    #  {}, [CarlParam('b-name', 'path', 'Boring description', True, int)]
-    #  ),
-    # ({'name': 'c-name', 'paramType': 'post', 'type': 'Testy'},
-    #  {'Testy': SwaggerModel(
-    #      id='Testy',
-    #      properties=[CarlParam('c-name', 'json-post'), CarlParam('d-name', 'json-post', type_=Raw)]
-    #  )},
-    #  [CarlParam('c-name', 'json-post'), CarlParam('d-name', 'json-post', type_=Raw)]),
-])
-def test_param_from_data(param_data, swagger_models, expected_params):
-    actual_params = list(SwaggerEndpoint.param_from_data(param_data, swagger_models))
-
-    assert actual_params == expected_params
-

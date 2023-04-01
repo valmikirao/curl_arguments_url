@@ -82,4 +82,10 @@ paths:
                     type: array
                     items:
                       type: integer
+  /has/multiple/methods:
+    description: Path Description
+    post: {}
+    get: {}
+    patch:
+      summary: Operation Summary
 
