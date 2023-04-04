@@ -89,3 +89,15 @@ paths:
     patch:
       summary: Operation Summary
 
+  /{arg}/in/path/and/body:
+    post:
+      requestBody:
+        content:
+          application/json:
+            media_type_schema:
+              type: object
+              properties:
+                arg:
+                  description: and in body
+                  type: string
+
