@@ -1,8 +1,5 @@
 import os
 
-import click
-
-
 # @click.group()
 # def main():
 #     print('main')
@@ -19,6 +16,8 @@ COMPLETES = [
     ('foo', 'A description:{frank}'),
     ('food', 'Food, yes')
 ]
+
+
 def main():
     comp_words = os.environ.get('COMP_WORDS').split(' ')
     comp_cword = int(os.environ.get('COMP_CWORD'))
@@ -38,9 +37,5 @@ def main():
                 print(descr)
 
 
-
-
-
 if __name__ == '__main__':
     main()
-

@@ -40,5 +40,6 @@ def main(fin=sys.stdin) -> None:
     data_out = trace_to_data(fin.readlines())
     json.dump(data_out, sys.stdout, indent=2)
 
+
 if __name__ == '__main__':
     main()

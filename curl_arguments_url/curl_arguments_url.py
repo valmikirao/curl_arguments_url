@@ -5,14 +5,13 @@ import json
 import os
 import re
 import shutil
-import sys
 from abc import ABC, abstractmethod
 from collections import defaultdict, OrderedDict
 from datetime import datetime
 from enum import Enum
 from hashlib import md5
-from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, Callable, Any, \
-    Set, MutableMapping, cast
+from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, \
+    Callable, Any, Set, MutableMapping, cast
 
 from jsonref import replace_refs as replace_json_refs  # type: ignore
 from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter, PathItem
@@ -40,6 +39,7 @@ class Method(Enum):
     HEAD = 'HEAD'
     PATCH = 'PATCH'
     TRACE = 'TRACE'
+
 
 METHODS: List[str] = list(Method.__members__.keys())
 
@@ -103,7 +103,6 @@ class FileCache(ABC, Generic[T, V]):
             return default
 
 
-
 def boolean_type(val: Optional[str]) -> bool:
     if val and val.lower() in ('1', 't', 'true'):
         return True
@@ -149,7 +148,9 @@ class ParamType(Enum):
     header = 'header'
     json_body = 'json_body'
 
+
 BODY_ARG_SUFFIX = 'BODY'
+
 
 class CarlParam(BaseModel):
     name: str
@@ -190,6 +191,7 @@ class CarlParam(BaseModel):
                 param_name = param_name[:-len(suffix)]
 
         return param_name
+
 
 EndpointParams = Dict[str, List[CarlParam]]
 
@@ -612,8 +614,6 @@ class SwaggerRepo:
             remaining: List[str] = getattr(args, REMAINING_ARG) or []
             param_arg_pairs = param_args_to_pairs(args)
             cache_param_arg_pairs(param_arg_pairs)
-            cached_endpoint = self.endpoint_cache[url_, method]
-            selected_endpoint = SwaggerEndpoint.from_cached_endpoint(cached_endpoint)
 
             headers, param_arg_pairs = format_headers(param_arg_pairs)
             post_data, param_arg_pairs = format_post_data(param_arg_pairs)

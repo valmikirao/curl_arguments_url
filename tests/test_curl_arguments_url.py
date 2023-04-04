@@ -5,7 +5,7 @@ from typing import List
 
 import pytest
 
-from curl_arguments_url.curl_arguments_url import SwaggerEndpoint, CarlParam, SwaggerRepo
+from curl_arguments_url.curl_arguments_url import SwaggerRepo
 
 
 @pytest.mark.parametrize('args,expected_cmd', [
@@ -36,7 +36,7 @@ from curl_arguments_url.curl_arguments_url import SwaggerEndpoint, CarlParam, Sw
      'curl -X POST fake.com/posting/stuff'.split(' ') + [
          '-H', 'Content-Type: application/json',
          '--data-binary', '{"arg_one": "val_one", "arg_two": 2}'
-     ]),
+    ]),
     ('fake.com/posting/raw/stuff POST +arg_list one +arg_list two +arg_list_int 1'.split(' ') + [
         '+arg_nested', '{"A": 1, "B": 2}', '+array_nested', '[1, 2]', '[3, 4]'
     ], 'curl -X POST fake.com/posting/raw/stuff'.split(' ') + [
@@ -49,7 +49,7 @@ from curl_arguments_url.curl_arguments_url import SwaggerEndpoint, CarlParam, Sw
      'curl -X POST fake.com/path_value/in/path/and/body'.split(' ') + [
          '-H', 'Content-Type: application/json',
          '--data-binary', '{"arg": "body_value"}'
-     ])
+    ])
 ])
 def test_cli_args_to_cmd(swagger_model: SwaggerRepo, args: List[str], expected_cmd: List[str]):
     cmd, _ = swagger_model.cli_args_to_cmd(args)

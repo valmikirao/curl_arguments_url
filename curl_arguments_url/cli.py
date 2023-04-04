@@ -4,7 +4,6 @@ import shlex
 import subprocess
 
 from curl_arguments_url.curl_arguments_url import SwaggerRepo
-import yaml.scanner
 
 
 def main():
@@ -45,5 +44,3 @@ def main():
 
 if __name__ == '__main__':
     exit(main())
-
-
