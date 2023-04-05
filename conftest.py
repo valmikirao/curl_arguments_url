@@ -5,6 +5,7 @@ import pytest
 from curl_arguments_url.curl_arguments_url import SwaggerRepo
 from curl_arguments_url import curl_arguments_url
 
+
 @pytest.fixture()
 def content_root():
     content_root, _ = os.path.split(__file__)

@@ -25,6 +25,7 @@ _carl_test_completion() {
 compdef _carl_test_completion carl;
 """
 
+
 def main():
     """Console script for curl_arguments_url."""
 

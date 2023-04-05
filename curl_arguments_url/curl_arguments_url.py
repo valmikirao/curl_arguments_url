@@ -16,13 +16,14 @@ from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Opt
 
 from jsonref import replace_refs as replace_json_refs  # type: ignore
 from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter, PathItem
-from pydantic import BaseModel, validator, BaseSettings, Field
+from pydantic import BaseModel, validator
 from typing_extensions import Literal
 from urllib.parse import urlencode
 
 import yaml
 
 REMAINING_ARG = 'passed_to_curl'
+
 
 class EnvVariable:
     registry: List['EnvVariable'] = []
@@ -827,8 +828,10 @@ def get_command_epilogue() -> str:
         )
     return return_str
 
+
 ZSH_COMPLETION = 'zsh-completion'
 ZSH_PRINT_SCRIPT = 'zsh-print-script'
+
 
 def add_util_parser(parser: Any) -> Any:
     util_parser: argparse.ArgumentParser = parser.add_parser(

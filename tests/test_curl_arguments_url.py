@@ -98,10 +98,11 @@ ARG_PATH_AND_BODY_COMPLETIONS = [
     CompletionItem(tag='+arg:BODY', description='and in body'),
     CompletionItem(tag='+arg:PATH', description=None),
 ]
+
+
 class UpperLower(Enum):
     upper = 'upper'
     lower = 'lower'
-
 
 
 @pytest.fixture(params=[UpperLower.upper, UpperLower.lower])
@@ -124,7 +125,7 @@ def upper_or_lower(request) -> UpperLower:
     (3, ['carl', 'fake.com/{arg}/in/path/and/body', 'POST', '+'], ARG_PATH_AND_BODY_COMPLETIONS),
     (4, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', ''], [
         CompletionItem(tag=t, description=None) for t in (
-                'bar-thing', 'barfoo-thing', 'foo-thing', 'foobar-thing'
+            'bar-thing', 'barfoo-thing', 'foo-thing', 'foobar-thing'
         )
     ]),
     (7, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', 'block', '+bang', 'bar', 'foo'], [
