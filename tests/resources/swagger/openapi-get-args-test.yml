@@ -83,6 +83,7 @@ paths:
                     items:
                       type: integer
   /has/multiple/methods:
+    summary: Path Summary
     description: Path Description
     post: {}
     get: {}
@@ -100,4 +101,23 @@ paths:
                 arg:
                   description: and in body
                   type: string
-
+  /completer:
+    summary: For Completion Tests
+    get:
+      summary: Get
+      description: Get Stuff
+      parameters:
+        - name: foo
+          description: Foo!
+          in: query
+        - name: foobar
+          in: query
+        - name: bar
+          description: Bar!
+          in: query
+        - name: barfoo
+          in: query
+    post:
+      desciption: Post Stuff
+    patch: {}
+    delete: {}

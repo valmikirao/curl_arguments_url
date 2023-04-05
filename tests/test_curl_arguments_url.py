@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
 """Tests for `curl_arguments_url` package."""
-from typing import List
+from enum import Enum
+from typing import List, Tuple, Optional
 
 import pytest
 
-from curl_arguments_url.curl_arguments_url import SwaggerRepo
+from curl_arguments_url.curl_arguments_url import SwaggerRepo, CompletionItem
 
 
 @pytest.mark.parametrize('args,expected_cmd', [
@@ -55,3 +56,99 @@ def test_cli_args_to_cmd(swagger_model: SwaggerRepo, args: List[str], expected_c
     cmd, _ = swagger_model.cli_args_to_cmd(args)
 
     assert cmd == expected_cmd
+
+
+POSTING_URL_COMPLETIONS = [
+    CompletionItem(tag='fake.com/posting/raw/stuff', description='Testing Spec'),
+    CompletionItem(tag='fake.com/posting/stuff', description='Testing Spec')
+]
+ALL_URL_COMPLETIONS = [
+    CompletionItem(tag='fake.com/completer', description='For Completion Tests'),
+    CompletionItem(tag='fake.com/dashed/arg/name', description='Testing Spec'),
+    CompletionItem(tag='fake.com/get', description='Testing Spec'),
+    CompletionItem(tag='fake.com/has/multiple/methods', description='Path Summary'),
+    CompletionItem(tag='fake.com/need/a/header/{for}/this', description='Testing Spec'),
+    *POSTING_URL_COMPLETIONS,
+    CompletionItem(tag='fake.com/{arg}/in/path/and/body', description='Testing Spec'),
+    CompletionItem(tag='fake.com/{bad-thing}/do', description='Testing Spec'),
+    CompletionItem(tag='fake.com/{thing}/do', description='Testing Spec')
+]
+
+FOOBAR_COMPLETION = CompletionItem(tag='+foobar', description=None)
+FOO_PREFIXED_COMPLETIONS = [
+    CompletionItem(tag='+foo', description='Foo!'),
+    FOOBAR_COMPLETION
+]
+ALL_ARG_COMPLETIONS = [
+    CompletionItem(tag='+bar', description='Bar!'),
+    CompletionItem(tag='+barfoo', description=None),
+    *FOO_PREFIXED_COMPLETIONS
+]
+GET_COMPLETION = CompletionItem(tag='GET', description='Get')
+P_PREFIXED_METHOD_COMPLETIONS = [
+    CompletionItem(tag='PATCH', description='For Completion Tests'),
+    CompletionItem(tag='POST', description='For Completion Tests')
+]
+ALL_METHOD_COMPLETIONS = [
+    CompletionItem(tag='DELETE', description='For Completion Tests'),
+    GET_COMPLETION,
+    *P_PREFIXED_METHOD_COMPLETIONS
+]
+ARG_PATH_AND_BODY_COMPLETIONS = [
+    CompletionItem(tag='+arg:BODY', description='and in body'),
+    CompletionItem(tag='+arg:PATH', description=None),
+]
+class UpperLower(Enum):
+    upper = 'upper'
+    lower = 'lower'
+
+
+
+@pytest.fixture(params=[UpperLower.upper, UpperLower.lower])
+def upper_or_lower(request) -> UpperLower:
+    return request.param
+
+
+@pytest.mark.usefixtures('make_value_cache_ephemeral')
+@pytest.mark.parametrize('index,words,expected', [
+    (1, ['carl', 'fake.com'], ALL_URL_COMPLETIONS),
+    (1, ['carl', 'u'], [CompletionItem('utils', 'Utilities')]),
+    (1, ['carl', 'fake.com/posting/'], POSTING_URL_COMPLETIONS),
+    (2, ['carl', 'fake.com/completer', ''], ALL_METHOD_COMPLETIONS),
+    (2, ['carl', 'fake.com/completer', 'P'], P_PREFIXED_METHOD_COMPLETIONS),
+    (2, ['carl', 'fake.com/completer', 'GET'], [GET_COMPLETION]),
+    (3, ['carl', 'fake.com/completer', 'GET', '+'], ALL_ARG_COMPLETIONS),
+    (3, ['carl', 'fake.com/completer', 'GET', '+foo'], FOO_PREFIXED_COMPLETIONS),
+    (3, ['carl', 'fake.com/completer', 'GET', '+foobar'], [FOOBAR_COMPLETION]),
+    (5, ['carl', 'fake.com/completer', 'GET', '+barfoo', 'foo', '+foo'], FOO_PREFIXED_COMPLETIONS),
+    (3, ['carl', 'fake.com/{arg}/in/path/and/body', 'POST', '+'], ARG_PATH_AND_BODY_COMPLETIONS),
+    (4, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', ''], [
+        CompletionItem(tag=t, description=None) for t in (
+                'bar-thing', 'barfoo-thing', 'foo-thing', 'foobar-thing'
+        )
+    ]),
+    (7, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', 'block', '+bang', 'bar', 'foo'], [
+        CompletionItem(tag=t, description=None) for t in ('foo-bang', 'foobar-bang')
+    ])
+])
+def test_get_completions(swagger_model: SwaggerRepo, index: int, words: List[str],
+                         expected: List[Tuple[str, Optional[str]]],
+                         upper_or_lower: UpperLower):
+    # we want to be testing that this is case-insensitive
+    if upper_or_lower == UpperLower.upper:
+        words[-1] = words[-1].upper()
+    elif upper_or_lower == UpperLower.lower:
+        words[-1] = words[-1].lower()
+    else:
+        raise NotImplementedError()
+
+    # get some values in the cache
+    arg_value_prefixes = ['foo', 'bar', 'foobar', 'barfoo']
+    for prefix in arg_value_prefixes:
+        swagger_model.cli_args_to_cmd([
+            'fake.com/{thing}/do', 'GET',
+            '+thing', f"{prefix}-thing", '+bang', f"{prefix}-bang"
+        ])
+
+    actual = swagger_model.get_completions(index, words)
+    assert list(actual) == expected

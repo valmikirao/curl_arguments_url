@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import textwrap
 from abc import ABC, abstractmethod
 from collections import defaultdict, OrderedDict
 from datetime import datetime
@@ -15,7 +16,7 @@ from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Opt
 
 from jsonref import replace_refs as replace_json_refs  # type: ignore
 from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter, PathItem
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, validator, BaseSettings, Field
 from typing_extensions import Literal
 from urllib.parse import urlencode
 
@@ -23,11 +24,35 @@ import yaml
 
 REMAINING_ARG = 'passed_to_curl'
 
-CARL_DIR = os.path.join(os.environ["HOME"], '.carl')
-SWAGGER_DIR = os.environ.get(
-    'CARL_SWAGGER_DIR',
-    os.path.join(CARL_DIR, 'swagger')
+class EnvVariable:
+    registry: List['EnvVariable'] = []
+
+    def __init__(self, env_name: str, default: str, description: str):
+        self.env_name = env_name
+        self.default = default
+        self.description = description
+
+        self.registry.append(self)
+
+    def get_value(self) -> str:
+        return os.environ.get(self.env_name, self.default)
+
+
+CARL_DIR_ENV = EnvVariable(
+    'CARL_DIR', os.path.join(os.environ.get('HOME', '/'), '.carl'),
+    description='Directory which contains files for carl.'
 )
+CARL_DIR = CARL_DIR_ENV.get_value()
+OPEN_API_DIR_ENV = EnvVariable(
+    'CARL_OPEN_API_DIR', os.path.join(CARL_DIR, 'open_api'),
+    description='Directory containing the OpenApi specifications and Yaml files.'
+)
+OPEN_API_DIR = OPEN_API_DIR_ENV.get_value()
+CACHE_DIR_ENV = EnvVariable(
+    'CARL_CACHE_DIR', os.path.join(CARL_DIR, 'cache'),
+    description='Directory containing the cache.'
+)
+CACHE_DIR = CACHE_DIR_ENV.get_value()
 
 
 class Method(Enum):
@@ -51,10 +76,8 @@ ArgType = Callable[[str], T]
 
 
 class FileCache(ABC, Generic[T, V]):
-    CACHE_DIR = os.path.join(CARL_DIR, 'cache')
-
     def __init__(self, dir_: str):
-        self._dir = os.path.join(self.CACHE_DIR, dir_)
+        self._dir = os.path.join(CACHE_DIR, dir_)
         self._process_cache: Dict[T, V] = {}
 
     @abstractmethod
@@ -357,7 +380,8 @@ class GenericArgs(NamedTuple):
     print_cmd: bool = False
     run_cmd: bool = False
     util: bool = False
-    completion_args: Optional[CompletionArgs] = None
+    zsh_completion_args: Optional[CompletionArgs] = None
+    zsh_print_script: bool = False
 
 
 class CompletionItem(NamedTuple):
@@ -365,7 +389,8 @@ class CompletionItem(NamedTuple):
     description: Optional[str]
 
 
-UTIL_COMPLETION_ITEM = CompletionItem('util', 'Utilities')
+UTILS_CMD_STR = 'utils'
+UTILS_COMPLETION_ITEM = CompletionItem(UTILS_CMD_STR, 'Utilities')
 
 
 class SwaggerRepo:
@@ -383,10 +408,14 @@ class SwaggerRepo:
             self.methods_cache = cast(MethodsCache, {})
             self.endpoint_cache = cast(EndpointCache, {})
 
+        os.makedirs(OPEN_API_DIR, exist_ok=True)
         if files is None:
-            swagger_files = [os.path.join(SWAGGER_DIR, f) for f in os.listdir(SWAGGER_DIR)]
+            swagger_files = [os.path.join(OPEN_API_DIR, f) for f in os.listdir(OPEN_API_DIR)]
         else:
             swagger_files = files
+
+        if len(swagger_files) == 0:
+            raise Exception(f"No OpenApi files in {OPEN_API_DIR}")
 
         root_cache_item = self.root_cache.get(None, None)
         if root_cache_item:
@@ -581,7 +610,7 @@ class SwaggerRepo:
 
         if not valid_url_chosen:
             # either this is a --help request or an error
-            no_url_parser = argparse.ArgumentParser(description=CARL_CMD_DESCRIPTION)
+            no_url_parser = get_arg_parser()
             url_subparsers = no_url_parser.add_subparsers(dest='url', required=True)
 
             url_subparsers = add_util_parser(url_subparsers)
@@ -592,11 +621,12 @@ class SwaggerRepo:
             # This should give either the correct error or correct help message
             parsed_args = no_url_parser.parse_args(cli_args)
 
-            if parsed_args.url == 'util':
+            if parsed_args.url == UTILS_CMD_STR:
                 # this is a util request, will
                 return [], GenericArgs(
                     util=True,
-                    completion_args=namespace_to_completion_args(parsed_args)
+                    zsh_completion_args=namespace_to_zsh_completion_args(parsed_args),
+                    zsh_print_script=(parsed_args.util_type == ZSH_PRINT_SCRIPT)
                 )
             else:
                 raise AssertionError('Should not make it here')
@@ -632,7 +662,7 @@ class SwaggerRepo:
             -> argparse.ArgumentParser:
         url = url
         methods = self.methods_cache[url]
-        arg_parser = argparse.ArgumentParser(description=CARL_CMD_DESCRIPTION)
+        arg_parser = get_arg_parser()
         url_subparsers = arg_parser.add_subparsers(dest='url', required=True)
         url_parser = url_subparsers.add_parser(url, help=url_desc)
         method_subparsers = url_parser.add_subparsers(dest='method', required=True)
@@ -655,22 +685,22 @@ class SwaggerRepo:
                 words_.append('')
             else:
                 words_.append(word)
-
+        items_to_return: List[CompletionItem] = []
         if index == 0:
-            return 'carl'
+            items_to_return.append(CompletionItem(tag='carl', description=None))
         elif index == 1:
-            # this means it's either the url or "util"
+            # this means it's either the url or "utils"
             prefix: str = words_[1] or ''
-            if UTIL_COMPLETION_ITEM.tag.startswith(prefix):
-                yield UTIL_COMPLETION_ITEM
+            if UTILS_COMPLETION_ITEM.tag.lower().startswith(prefix.lower()):
+                items_to_return.append(UTILS_COMPLETION_ITEM)
             possible_urls = self.root_cache[None].urls
             for possible_url in possible_urls:
-                if possible_url.url.startswith(prefix):
+                if possible_url.url.lower().startswith(prefix.lower()):
                     description = possible_url.summary or possible_url.description
-                    yield CompletionItem(
+                    items_to_return.append(CompletionItem(
                         tag=possible_url.url,
                         description=description
-                    )
+                    ))
         elif index == 2:
             # this means it's a method
             url = words_[1]
@@ -679,13 +709,13 @@ class SwaggerRepo:
             possible_methods: List[Method] = self.methods_cache.get(url, [])
 
             for method in possible_methods:
-                if method.value.startswith(prefix):
+                if method.value.lower().startswith(prefix.lower()):
                     endpoint = self.endpoint_cache[url, method]
                     description = endpoint.summary or endpoint.description
-                    yield CompletionItem(
+                    items_to_return.append(CompletionItem(
                         tag=method.value,
                         description=description
-                    )
+                    ))
         elif index > 2:
             url = words_[1]
             try:
@@ -695,21 +725,23 @@ class SwaggerRepo:
 
             is_value_arg = self.get_arg_name_this_is_value_for(words_[3:index + 1])
             if is_value_arg is None:
-                yield from self.get_param_completions(url, method, prefix=words_[index])
+                items_to_return.extend(self.get_param_completions(url, method, prefix=words_[index]))
             else:
-                values: List[ArgValue] = arg_cache.get(is_value_arg[1:], [])
+                values: List[ArgValue] = arg_value_cache.get(is_value_arg, [])
                 prefix = words_[index]
                 for value in values:
-                    if str(value).startswith(prefix):
-                        yield CompletionItem(
+                    if str(value).lower().startswith(prefix.lower()):
+                        items_to_return.append(CompletionItem(
                             tag=str(value),
                             description=None
-                        )
+                        ))
         else:
-            yield CompletionItem(
+            items_to_return.append(CompletionItem(
                 tag=words_[index],
                 description=None
-            )
+            ))
+
+        return sorted(items_to_return, key=lambda x: x.tag)
 
     def get_arg_name_this_is_value_for(self, words: List[str]) -> Optional[str]:
         # Get Rid of Generic Args
@@ -732,7 +764,7 @@ class SwaggerRepo:
         if prefix == '' or prefix.startswith('-'):
             for generic_arg in GENERIC_OPTIONAL_ARGS:
                 for tag in generic_arg.name_or_flags:
-                    if tag.startswith(prefix):
+                    if tag.lower().startswith(prefix.lower()):
                         yield CompletionItem(
                             tag=tag,
                             description=generic_arg.kwargs['help']
@@ -743,31 +775,78 @@ class SwaggerRepo:
             for params_for_name in endpoint.params.values():
                 for param in params_for_name:
                     tag = param.get_arg_name()
-                    if tag.startswith(prefix):
+                    if tag.lower().startswith(prefix.lower()):
                         yield CompletionItem(
                             tag=tag,
                             description=param.description
                         )
 
 
-CARL_CMD_DESCRIPTION = "TBD"
+def get_width():
+    """ This is what HelpFormatted does for default width """
+    try:
+        width = int(os.environ['COLUMNS'])
+    except (KeyError, ValueError):
+        width = 80
+    width -= 2
 
+    return width
+
+
+def get_command_description() -> str:
+    unformatted_text = \
+        f"A Utility to cleanly take command-line arguments, for an endpoint you have the OpenAPI specification for," \
+        f" and convert them into an appropriate curl command.  Spec files should be in {OPEN_API_DIR_ENV.default}" \
+        f" directory or directory defined by env variables (See below)"
+    return wrap_text(unformatted_text)
+
+
+def wrap_text(unformatted_text, **kwargs):
+    width = get_width()
+    return_str = ''
+    for line in textwrap.wrap(unformatted_text, width, **kwargs):
+        return_str += line + "\n"
+    return return_str
+
+
+def get_arg_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(
+        description=get_command_description(),
+        epilog=get_command_epilogue(),
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+
+def get_command_epilogue() -> str:
+    return_str = 'Environment Variables:\n'
+    for env_variable in EnvVariable.registry:
+        return_str += wrap_text(
+            f"{env_variable.env_name}: {env_variable.description}  Default: {env_variable.default}\n",
+            initial_indent=' ' * 4,
+            subsequent_indent=' ' * 24
+        )
+    return return_str
+
+ZSH_COMPLETION = 'zsh-completion'
+ZSH_PRINT_SCRIPT = 'zsh-print-script'
 
 def add_util_parser(parser: Any) -> Any:
     util_parser: argparse.ArgumentParser = parser.add_parser(
-        UTIL_COMPLETION_ITEM.tag, description=UTIL_COMPLETION_ITEM.description
+        UTILS_COMPLETION_ITEM.tag, description=UTILS_COMPLETION_ITEM.description
     )
     util_type_subparsers = util_parser.add_subparsers(dest='util_type', required=True)
 
-    zsh_completion_parser = util_type_subparsers.add_parser('zsh-completion', description='Return completions')
+    zsh_completion_parser = util_type_subparsers.add_parser(ZSH_COMPLETION, description='Return completions')
     zsh_completion_parser.add_argument('word_index', type=int)
     zsh_completion_parser.add_argument('line')
+
+    util_type_subparsers.add_parser(ZSH_PRINT_SCRIPT, description='Print the zsh script that enables completions')
 
     return parser
 
 
-def namespace_to_completion_args(namespace: argparse.Namespace) -> Optional[CompletionArgs]:
-    if namespace.util_type == 'zsh-completion':
+def namespace_to_zsh_completion_args(namespace: argparse.Namespace) -> Optional[CompletionArgs]:
+    if namespace.util_type == ZSH_COMPLETION:
         return CompletionArgs(
             word_index=namespace.word_index,
             line=namespace.line
@@ -795,17 +874,17 @@ class ArgCache(FileCache[str, List[ArgValue]]):
         return key
 
 
-arg_cache = ArgCache('args')
+arg_value_cache = ArgCache('arg_values')
 
 
 def cache_param_arg_pairs(param_args: ArgPairs) -> None:
     for param, value in param_args:
         key = param.name
-        arg_history: List[ArgValue] = arg_cache.get(key, [])
+        arg_history: List[ArgValue] = arg_value_cache.get(key, [])
 
         new_history: List[ArgValue] = [value] + [a for a in arg_history if a != value]
         new_history = new_history[:MAX_HISTORY]
-        arg_cache[key] = new_history
+        arg_value_cache[key] = new_history
 
 
 def format_post_data(param_args: ArgPairs) -> Tuple[List[str], ArgPairs]:
