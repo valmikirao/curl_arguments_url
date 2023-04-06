@@ -1,0 +1,15 @@
+version: "3.9"
+services:
+  webapp:
+    hostname: fake.com
+    build:
+      dockerfile: Dockerfile.flask
+      context: .
+    volumes:
+      - "./flask_src:/app"
+  carl-zsh:
+    build:
+      dockerfile: tests/dockerfiles/Dockerfile.zsh
+      context: ../..
+
+

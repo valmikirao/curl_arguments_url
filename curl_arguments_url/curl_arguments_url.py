@@ -416,17 +416,18 @@ class SwaggerRepo:
             swagger_files = files
 
         if len(swagger_files) == 0:
-            raise Exception(f"No OpenApi files in {OPEN_API_DIR}")
-
-        root_cache_item = self.root_cache.get(None, None)
-        if root_cache_item:
-            cache_time = root_cache_item.time
+            # There is no swagger data, but there are some "utils" commands where this is OK
+            pass
         else:
-            cache_time = 0
-        yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
-        if yaml_files_time > cache_time:
-            self.clear_all_caches()
-            self._load_swagger_data(swagger_files=swagger_files)
+            root_cache_item = self.root_cache.get(None, None)
+            if root_cache_item:
+                cache_time = root_cache_item.time
+            else:
+                cache_time = 0
+            yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
+            if yaml_files_time > cache_time:
+                self.clear_all_caches()
+                self._load_swagger_data(swagger_files=swagger_files)
 
     def clear_all_caches(self) -> None:
         self.root_cache.clear()
@@ -736,6 +737,9 @@ class SwaggerRepo:
                             tag=str(value),
                             description=None
                         ))
+                if len(items_to_return) == 0:
+                    # if nothing in the cache matches, return the item itself so it doesn't get blanked out
+                    items_to_return = [CompletionItem(tag=prefix, description=None)]
         else:
             items_to_return.append(CompletionItem(
                 tag=words_[index],
@@ -745,15 +749,20 @@ class SwaggerRepo:
         return sorted(items_to_return, key=lambda x: x.tag)
 
     def get_arg_name_this_is_value_for(self, words: List[str]) -> Optional[str]:
-        # Get Rid of Generic Args
+        # Get Rid of Generic Args, except from the last word
         arg_parser = argparse.ArgumentParser(add_help=False)
         arg_parser = add_generic_args(arg_parser)
         arg_parser.add_argument('--help', '-h')
         remaining_args: List[str]
-        _, remaining_args = arg_parser.parse_known_args(words)
+        _, remaining_args = arg_parser.parse_known_args(words[:-1])
+        remaining_args.append(words[-1])
 
         if len(remaining_args) <= 1 or remaining_args[-1].startswith('+'):
             # not enough remaining args, or this is a param
+            return None
+        elif len(remaining_args) >= 3 and remaining_args[-1].startswith('-') \
+                and remaining_args[-3].startswith('+'):
+            # special case: ... "+foo value -" should autocomplete to generic args
             return None
         else:
             for arg in reversed(remaining_args[:-1]):

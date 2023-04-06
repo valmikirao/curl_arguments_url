@@ -4,6 +4,7 @@ info:
     version: 0.0.1
 servers:
   - url: fake.com
+  - url: http://fake.com
 paths:
   /get:
     post:
