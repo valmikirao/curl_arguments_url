@@ -9,6 +9,9 @@ from curl_arguments_url.curl_arguments_url import SwaggerRepo
 ZSH_SCRIPT = """\
 #compdef carl
 
+autoload -U compinit
+compinit
+
 _carl_test_completion() {
     local -a completions
     local -a completions_with_descriptions

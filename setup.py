@@ -1,17 +1,27 @@
 #!/usr/bin/env python
 
 """The setup script."""
+import os.path
 
 from setuptools import setup, find_packages
 
-with open('README.rst') as readme_file:
-    readme = readme_file.read()
 
-with open('HISTORY.rst') as history_file:
-    history = history_file.read()
+def _read_file(file: str) -> str:
+    # we only needs these files if we're publishing
+    if os.path.exists(file):
+        with open(file) as readme_file:
+            return readme_file.read()
+    else:
+        return 'N/A'
+
+
+readme = _read_file('README.rst')
+history = _read_file('HISTORY.rst')
 
 requirements = [
-    'PyYAML==6.0'
+    'PyYAML>=6.0.0,<7.0.0',
+    'jsonref>=1.1.0,<2.0.0',
+    'openapi-schema-pydantic>=1.2.4,<2.0.0'
 ]
 
 setup_requirements = ['pytest-runner', ]

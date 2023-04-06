@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 
 """Tests for `curl_arguments_url` package."""
-from enum import Enum
-from typing import List, Tuple, Optional
+from copy import deepcopy
+from typing import List, Tuple, Optional, Iterable
 
 import pytest
 
@@ -98,50 +98,66 @@ ARG_PATH_AND_BODY_COMPLETIONS = [
     CompletionItem(tag='+arg:BODY', description='and in body'),
     CompletionItem(tag='+arg:PATH', description=None),
 ]
+ALL_GENERIC_COMPLETIONS = [
+    CompletionItem(tag='--no-run', description="Don't run the curl command.  Useful with -p"),
+    CompletionItem(tag='--print-cmd', description='Print the resulting curl command to standard out'),
+    CompletionItem(tag='-n', description="Don't run the curl command.  Useful with -p"),
+    CompletionItem(tag='-p', description='Print the resulting curl command to standard out'),
+]
 
 
-class UpperLower(Enum):
-    upper = 'upper'
-    lower = 'lower'
+TestGetCompletionsCase = Tuple[int, List[str], List[CompletionItem]]
 
 
-@pytest.fixture(params=[UpperLower.upper, UpperLower.lower])
-def upper_or_lower(request) -> UpperLower:
-    return request.param
+class TestGetCompletionsParametrize:
+    UPPER_AND_LOWER_CASES = [
+            (1, ['carl', 'fake.com'], ALL_URL_COMPLETIONS),
+            (1, ['carl', 'u'], [CompletionItem('utils', 'Utilities')]),
+            (1, ['carl', 'fake.com/posting/'], POSTING_URL_COMPLETIONS),
+            (2, ['carl', 'fake.com/completer', ''], ALL_METHOD_COMPLETIONS),
+            (2, ['carl', 'fake.com/completer', 'P'], P_PREFIXED_METHOD_COMPLETIONS),
+            (2, ['carl', 'fake.com/completer', 'GET'], [GET_COMPLETION]),
+            (3, ['carl', 'fake.com/completer', 'GET', '+'], ALL_ARG_COMPLETIONS),
+            (3, ['carl', 'fake.com/completer', 'GET', '+foo'], FOO_PREFIXED_COMPLETIONS),
+            (3, ['carl', 'fake.com/completer', 'GET', '+foobar'], [FOOBAR_COMPLETION]),
+            (5, ['carl', 'fake.com/completer', 'GET', '+barfoo', 'foo', '+foo'], FOO_PREFIXED_COMPLETIONS),
+            (3, ['carl', 'fake.com/{arg}/in/path/and/body', 'POST', '+'], ARG_PATH_AND_BODY_COMPLETIONS),
+            (4, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', ''], [
+                CompletionItem(tag=t, description=None) for t in (
+                    'bar-thing', 'barfoo-thing', 'foo-thing', 'foobar-thing'
+                )
+            ]),
+            (7, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', 'block', '+bang', 'bar', 'foo'], [
+                CompletionItem(tag=t, description=None) for t in ('foo-bang', 'foobar-bang')
+            ]),
+            (3, ['carl', 'fake.com/completer', 'POST', '-'], ALL_GENERIC_COMPLETIONS),
+            (5, ['carl', 'fake.com/completer', 'POST', '+foo', 'some-val', '-'], ALL_GENERIC_COMPLETIONS)
+    ]
+    SIMPLE_CASES = [
+            (4, ['carl', 'fake.com/completer', 'POST', '+foo', 'not-in-cache'], [
+                CompletionItem(tag='not-in-cache', description=None)
+            ]),
+    ]
+
+    @classmethod
+    def get_cases(cls) -> Iterable[TestGetCompletionsCase]:
+        for case in cls.UPPER_AND_LOWER_CASES:
+            # test with both uppoer and lower
+            case_upper = deepcopy(case)
+            case_upper[1][-1] = case[1][-1].upper()
+            yield case_upper
+
+            case_lower = deepcopy(case)
+            case_lower[1][-1] = case[1][-1].lower()
+            yield case_lower
+        for case in cls.SIMPLE_CASES:
+            yield case
 
 
 @pytest.mark.usefixtures('make_value_cache_ephemeral')
-@pytest.mark.parametrize('index,words,expected', [
-    (1, ['carl', 'fake.com'], ALL_URL_COMPLETIONS),
-    (1, ['carl', 'u'], [CompletionItem('utils', 'Utilities')]),
-    (1, ['carl', 'fake.com/posting/'], POSTING_URL_COMPLETIONS),
-    (2, ['carl', 'fake.com/completer', ''], ALL_METHOD_COMPLETIONS),
-    (2, ['carl', 'fake.com/completer', 'P'], P_PREFIXED_METHOD_COMPLETIONS),
-    (2, ['carl', 'fake.com/completer', 'GET'], [GET_COMPLETION]),
-    (3, ['carl', 'fake.com/completer', 'GET', '+'], ALL_ARG_COMPLETIONS),
-    (3, ['carl', 'fake.com/completer', 'GET', '+foo'], FOO_PREFIXED_COMPLETIONS),
-    (3, ['carl', 'fake.com/completer', 'GET', '+foobar'], [FOOBAR_COMPLETION]),
-    (5, ['carl', 'fake.com/completer', 'GET', '+barfoo', 'foo', '+foo'], FOO_PREFIXED_COMPLETIONS),
-    (3, ['carl', 'fake.com/{arg}/in/path/and/body', 'POST', '+'], ARG_PATH_AND_BODY_COMPLETIONS),
-    (4, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', ''], [
-        CompletionItem(tag=t, description=None) for t in (
-            'bar-thing', 'barfoo-thing', 'foo-thing', 'foobar-thing'
-        )
-    ]),
-    (7, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', 'block', '+bang', 'bar', 'foo'], [
-        CompletionItem(tag=t, description=None) for t in ('foo-bang', 'foobar-bang')
-    ])
-])
+@pytest.mark.parametrize('index,words,expected', TestGetCompletionsParametrize.get_cases())
 def test_get_completions(swagger_model: SwaggerRepo, index: int, words: List[str],
-                         expected: List[Tuple[str, Optional[str]]],
-                         upper_or_lower: UpperLower):
-    # we want to be testing that this is case-insensitive
-    if upper_or_lower == UpperLower.upper:
-        words[-1] = words[-1].upper()
-    elif upper_or_lower == UpperLower.lower:
-        words[-1] = words[-1].lower()
-    else:
-        raise NotImplementedError()
+                         expected: List[Tuple[str, Optional[str]]]):
 
     # get some values in the cache
     arg_value_prefixes = ['foo', 'bar', 'foobar', 'barfoo']
