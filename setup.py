@@ -24,14 +24,10 @@ requirements = [
     'openapi-schema-pydantic>=1.2.4,<2.0.0'
 ]
 
-setup_requirements = ['pytest-runner', ]
-
-test_requirements = ['pytest>=3', ]
-
 setup(
     author="Valmiki Rao",
     author_email='valmikirao@gmail.com',
-    python_requires='>=3.5',
+    python_requires='>=3.7',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
         'Intended Audience :: Developers',
@@ -39,12 +35,14 @@ setup(
         'Natural Language :: English',
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
     ],
     description="Curl with Arguments for Url",
     entry_points={
         'console_scripts': [
             'carl=curl_arguments_url.cli:main',
-            'click-test=curl_arguments_url.click_test:main'
         ],
     },
     install_requires=requirements,
@@ -54,9 +52,7 @@ setup(
     keywords='curl_arguments_url,carl',
     name='curl_arguments_url',
     packages=find_packages(include=['curl_arguments_url', 'curl_arguments_url.*']),
-    setup_requires=setup_requirements,
     test_suite='tests',
-    tests_require=test_requirements,
     url='https://github.com/valmikirao/curl_arguments_url',
     version='0.1.0',
     zip_safe=False,
