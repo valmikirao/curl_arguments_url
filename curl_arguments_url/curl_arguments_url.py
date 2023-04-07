@@ -24,6 +24,10 @@ import yaml
 
 REMAINING_ARG = 'passed_to_curl'
 
+ZSH_COMPLETION = 'zsh-completion'
+ZSH_PRINT_SCRIPT = 'zsh-print-script'
+BASH_COMPLETION = 'bash-completion'
+BASH_PRINT_SCRIPT = 'bash-print-script'
 
 class EnvVariable:
     registry: List['EnvVariable'] = []
@@ -372,18 +376,61 @@ class EndpointCache(FileCache[EndpointKey, EndpointToCache]):
         return json.dumps([url, method_str])
 
 
-class CompletionArgs(NamedTuple):
+class ZshCompletionArgs(NamedTuple):
     word_index: int
     line: str
+
+    @classmethod
+    def from_namespace(cls, namespace: argparse.Namespace) -> 'ZshCompletionArgs':
+        return cls(
+            word_index=namespace.word_index,
+            line=namespace.line,
+        )
+
+
+class BashCompletionArgs(NamedTuple):
+    word_index: int
+    line: str
+    passed_cwords: List[str]
+
+    @classmethod
+    def from_namespace(cls, namespace: argparse.Namespace) -> 'BashCompletionArgs':
+        return cls(
+            word_index=namespace.word_index,
+            line=namespace.line,
+            passed_cwords=namespace.passed_cwords
+        )
 
 
 class GenericArgs(NamedTuple):
     print_cmd: bool = False
     run_cmd: bool = False
     util: bool = False
-    zsh_completion_args: Optional[CompletionArgs] = None
+    zsh_completion_args: Optional[ZshCompletionArgs] = None
     zsh_print_script: bool = False
+    bash_completion_args: Optional[BashCompletionArgs] = None
+    bash_print_script: bool = False
 
+    @classmethod
+    def from_namespace(cls, namespace: argparse.Namespace) -> 'GenericArgs':
+        if namespace.util_type == ZSH_COMPLETION:
+            zsh_completion_args = ZshCompletionArgs.from_namespace(namespace)
+        else:
+            zsh_completion_args = None
+
+        if namespace.util_type == BASH_COMPLETION:
+            bash_completion_args = BashCompletionArgs.from_namespace(namespace)
+        else:
+            bash_completion_args = None
+
+        return cls(
+            util = True,
+            zsh_print_script = (namespace.util_type == ZSH_PRINT_SCRIPT),
+            bash_print_script = (namespace.util_type == BASH_PRINT_SCRIPT),
+            zsh_completion_args=zsh_completion_args,
+            bash_completion_args=bash_completion_args
+
+        )
 
 class CompletionItem(NamedTuple):
     tag: str
@@ -624,12 +671,7 @@ class SwaggerRepo:
             parsed_args = no_url_parser.parse_args(cli_args)
 
             if parsed_args.url == UTILS_CMD_STR:
-                # this is a util request, will
-                return [], GenericArgs(
-                    util=True,
-                    zsh_completion_args=namespace_to_zsh_completion_args(parsed_args),
-                    zsh_print_script=(parsed_args.util_type == ZSH_PRINT_SCRIPT)
-                )
+                return [], GenericArgs.from_namespace(parsed_args)
             else:
                 raise AssertionError('Should not make it here')
         else:
@@ -680,7 +722,7 @@ class SwaggerRepo:
             method_parser.add_argument(REMAINING_ARG, nargs='*', help='Extra argument passed to curl')
         return arg_parser
 
-    def get_completions(self, index: int, words: Sequence[Optional[str]]) -> Iterable[CompletionItem]:
+    def get_completions(self, index: int, words: Sequence[Optional[str]]) -> List[CompletionItem]:
         words_: List[str] = []
         for word, _ in itertools.zip_longest(words, range(index + 1)):
             if word is None:
@@ -838,33 +880,27 @@ def get_command_epilogue() -> str:
     return return_str
 
 
-ZSH_COMPLETION = 'zsh-completion'
-ZSH_PRINT_SCRIPT = 'zsh-print-script'
-
-
 def add_util_parser(parser: Any) -> Any:
     util_parser: argparse.ArgumentParser = parser.add_parser(
         UTILS_COMPLETION_ITEM.tag, description=UTILS_COMPLETION_ITEM.description
     )
     util_type_subparsers = util_parser.add_subparsers(dest='util_type', required=True)
 
-    zsh_completion_parser = util_type_subparsers.add_parser(ZSH_COMPLETION, description='Return completions')
+    zsh_completion_parser = util_type_subparsers.add_parser(ZSH_COMPLETION, description='Return completions for zsh')
     zsh_completion_parser.add_argument('word_index', type=int)
     zsh_completion_parser.add_argument('line')
 
     util_type_subparsers.add_parser(ZSH_PRINT_SCRIPT, description='Print the zsh script that enables completions')
 
+    bash_completion_parser = util_type_subparsers.add_parser(BASH_COMPLETION, description='Return completions for bash')
+    bash_completion_parser.add_argument('word_index', type=int)
+    bash_completion_parser.add_argument('line')
+    bash_completion_parser.add_argument('passed_cwords', nargs='+',
+                                        help='Need both these and the line to overcome bash-completions strange'
+                                             ' parsing')
+    util_type_subparsers.add_parser(BASH_PRINT_SCRIPT, description='Print the bash script that enables completions')
+
     return parser
-
-
-def namespace_to_zsh_completion_args(namespace: argparse.Namespace) -> Optional[CompletionArgs]:
-    if namespace.util_type == ZSH_COMPLETION:
-        return CompletionArgs(
-            word_index=namespace.word_index,
-            line=namespace.line
-        )
-    else:
-        return None
 
 
 ArgValue = Union[str, int, float, Dict[str, 'ArgValue'], List['ArgValue']]

@@ -11,5 +11,9 @@ services:
     build:
       dockerfile: tests/dockerfiles/Dockerfile.zsh
       context: ../..
+  carl-bash:
+    build:
+      dockerfile: tests/dockerfiles/Dockerfile.bash
+      context: ../..
 
 
