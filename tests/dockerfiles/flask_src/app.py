@@ -16,8 +16,10 @@ def hello_world(path: str):
         if flask.request.content_type == 'application/json':
             return_dict['json_body'] = flask.request.json
         headers = dict(flask.request.headers)
-        # get rid of generit headers
-        del headers['Accept'], headers['Host'], headers['User-Agent']
+        # get rid of generic headers
+        for header in ('Accept', 'Host', 'User-Agent', 'Content-Length', 'Content-Type'):
+            if header in headers:
+                del headers[header]
         if headers:
             return_dict['extra_headers'] = headers
         return flask.jsonify(return_dict)

@@ -219,6 +219,13 @@ class CarlParam(BaseModel):
 
 EndpointParams = Dict[str, List[CarlParam]]
 
+ArgValue = Union[str, int, float, Dict[str, 'ArgValue'], List['ArgValue']]
+
+
+ArgPairs = List[Tuple[CarlParam, ArgValue]]
+
+MAX_HISTORY = 200
+
 
 class ParamArg(Generic[T]):
     """
@@ -326,6 +333,7 @@ class UrlToCache(BaseModel):
 class RootCacheItem(BaseModel):
     time: float
     urls: List[UrlToCache]
+    params_with_cached_values: List[str] = []
 
 
 class RootCache(FileCache[None, RootCacheItem]):
@@ -377,12 +385,20 @@ class CompletionArgs(NamedTuple):
     line: str
 
 
+class ValuesRmArgs(NamedTuple):
+    param_name: str
+    value: str
+
+
 class GenericArgs(NamedTuple):
     print_cmd: bool = False
     run_cmd: bool = False
     util: bool = False
     zsh_completion_args: Optional[CompletionArgs] = None
     zsh_print_script: bool = False
+    values_list_params: bool = False
+    values_ls_for_param: Optional[str] = None
+    values_rm_args: Optional[ValuesRmArgs] = None
 
 
 class CompletionItem(NamedTuple):
@@ -390,8 +406,7 @@ class CompletionItem(NamedTuple):
     description: Optional[str]
 
 
-UTILS_CMD_STR = 'utils'
-UTILS_COMPLETION_ITEM = CompletionItem(UTILS_CMD_STR, 'Utilities')
+UTILS_COMPLETION_ITEM = CompletionItem('utils', 'Utilities')
 
 
 class SwaggerRepo:
@@ -401,6 +416,7 @@ class SwaggerRepo:
             self.root_cache = RootCache('root')
             self.methods_cache = MethodsCache('methods')
             self.endpoint_cache = EndpointCache('endpoint')
+            self.arg_value_cache = ArgCache('arg_values')
         else:
             # this is a testing case, so make all caches are ephemeral
             # casting dicts should be OK, since they should have a subset of the
@@ -408,6 +424,7 @@ class SwaggerRepo:
             self.root_cache = cast(RootCache, {})
             self.methods_cache = cast(MethodsCache, {})
             self.endpoint_cache = cast(EndpointCache, {})
+            self.arg_value_cache = cast(ArgCache, {})
 
         os.makedirs(OPEN_API_DIR, exist_ok=True)
         if files is None:
@@ -615,7 +632,7 @@ class SwaggerRepo:
             no_url_parser = get_arg_parser()
             url_subparsers = no_url_parser.add_subparsers(dest='url', required=True)
 
-            url_subparsers = add_util_parser(url_subparsers)
+            url_subparsers = add_utils_parser(url_subparsers)
             for possible_url in possible_urls:
                 possible_url_desc = possible_url.description or possible_url.summary
                 url_subparsers.add_parser(possible_url.url, help=possible_url_desc)
@@ -623,12 +640,33 @@ class SwaggerRepo:
             # This should give either the correct error or correct help message
             parsed_args = no_url_parser.parse_args(cli_args)
 
-            if parsed_args.url == UTILS_CMD_STR:
+            if parsed_args.url == UTILS_COMPLETION_ITEM.tag:
                 # this is a util request, will
+                values_ls_for_param: Optional[str]
+                if parsed_args.util_type == VALUES_COMPLETION.tag \
+                        and parsed_args.cached_values_type == VALUES_LS_COMPLETION.tag:
+                    values_ls_for_param = parsed_args.param_name
+                else:
+                    values_ls_for_param = None
+                values_rm_args: Optional[ValuesRmArgs]
+                if parsed_args.util_type == VALUES_COMPLETION.tag \
+                        and parsed_args.cached_values_type == VALUES_RM_COMPLETION.tag:
+                    values_rm_args = ValuesRmArgs(
+                        param_name=parsed_args.param_name,
+                        value=parsed_args.value
+                    )
+                else:
+                    values_rm_args = None
                 return [], GenericArgs(
                     util=True,
                     zsh_completion_args=namespace_to_zsh_completion_args(parsed_args),
-                    zsh_print_script=(parsed_args.util_type == ZSH_PRINT_SCRIPT)
+                    zsh_print_script=(parsed_args.util_type == ZSH_PRINT_SCRIPT_COMPLETION.tag),
+                    values_list_params=(
+                        parsed_args.util_type == VALUES_COMPLETION.tag
+                        and parsed_args.cached_values_type == VALUES_PARAMS_COMPLETION.tag
+                    ),
+                    values_ls_for_param=values_ls_for_param,
+                    values_rm_args=values_rm_args
                 )
             else:
                 raise AssertionError('Should not make it here')
@@ -645,7 +683,7 @@ class SwaggerRepo:
 
             remaining: List[str] = getattr(args, REMAINING_ARG) or []
             param_arg_pairs = param_args_to_pairs(args)
-            cache_param_arg_pairs(param_arg_pairs)
+            self.cache_param_arg_pairs(param_arg_pairs)
 
             headers, param_arg_pairs = format_headers(param_arg_pairs)
             post_data, param_arg_pairs = format_post_data(param_arg_pairs)
@@ -659,6 +697,23 @@ class SwaggerRepo:
             )
 
             return ['curl', '-X', method_, formatted_url, *headers, *post_data, *remaining], generic_args
+
+    def cache_param_arg_pairs(self, param_args: ArgPairs) -> None:
+        param_names: List[str] = []
+        for param, value in param_args:
+            key = param.name
+            param_names.append(key)
+            arg_history: List[ArgValue] = self.arg_value_cache.get(key, [])
+
+            new_history: List[ArgValue] = [value] + [a for a in arg_history if a != value]
+            new_history = new_history[:MAX_HISTORY]
+            self.arg_value_cache[key] = new_history
+        root_cache_item = self.root_cache[None]
+        existing_param_names = root_cache_item.params_with_cached_values
+        params_with_cached_values = list(set(param_names + existing_param_names))
+        params_with_cached_values = sorted(params_with_cached_values)
+        root_cache_item.params_with_cached_values = params_with_cached_values
+        self.root_cache[None] = root_cache_item
 
     def get_path_arg_parser(self, url: str, url_desc: Optional[str] = None) \
             -> argparse.ArgumentParser:
@@ -703,6 +758,8 @@ class SwaggerRepo:
                         tag=possible_url.url,
                         description=description
                     ))
+        elif index >= 2 and words_[1] == UTILS_COMPLETION_ITEM.tag:
+            items_to_return = list(self.get_util_completions(index - 2, words_[2:]))
         elif index == 2:
             # this means it's a method
             url = words_[1]
@@ -729,17 +786,8 @@ class SwaggerRepo:
             if is_value_arg is None:
                 items_to_return.extend(self.get_param_completions(url, method, prefix=words_[index]))
             else:
-                values: List[ArgValue] = arg_value_cache.get(is_value_arg, [])
                 prefix = words_[index]
-                for value in values:
-                    if str(value).lower().startswith(prefix.lower()):
-                        items_to_return.append(CompletionItem(
-                            tag=str(value),
-                            description=None
-                        ))
-                if len(items_to_return) == 0:
-                    # if nothing in the cache matches, return the item itself so it doesn't get blanked out
-                    items_to_return = [CompletionItem(tag=prefix, description=None)]
+                items_to_return.extend(self.get_completions_for_values_for_param(is_value_arg, prefix))
         else:
             items_to_return.append(CompletionItem(
                 tag=words_[index],
@@ -747,6 +795,22 @@ class SwaggerRepo:
             ))
 
         return sorted(items_to_return, key=lambda x: x.tag)
+
+    def get_completions_for_values_for_param(self, param_name: str, prefix,
+                                             always_return_something: bool = True) \
+            -> List[CompletionItem]:
+        values = self.get_ls_values_for_param(param_name)
+        items_to_return: List[CompletionItem] = []
+        for value in values:
+            if value.lower().startswith(prefix.lower()):
+                items_to_return.append(CompletionItem(
+                    tag=str(value),
+                    description=None
+                ))
+        if always_return_something and len(items_to_return) == 0:
+            # if nothing in the cache matches, return the item itself so it doesn't get blanked out
+            items_to_return = [CompletionItem(tag=prefix, description=None)]
+        return items_to_return
 
     def get_arg_name_this_is_value_for(self, words: List[str]) -> Optional[str]:
         # Get Rid of Generic Args, except from the last word
@@ -790,6 +854,65 @@ class SwaggerRepo:
                             tag=tag,
                             description=param.description
                         )
+
+    def get_params_with_cached_values(self) -> Iterable[str]:
+        root_cache_item = self.root_cache[None]
+        return root_cache_item.params_with_cached_values
+
+    def get_util_completions(self, index: int, words: List[str]) -> Iterable[CompletionItem]:
+        def _from_list(prefix: str, completions_list: List[CompletionItem]) -> Iterable[CompletionItem]:
+            for completion in completions_list:
+                if completion.tag.startswith(prefix):
+                    yield completion
+
+        if index == 0:
+            yield from _from_list(words[0], UTIL_TYPE_COMPLETIONS)
+        elif index == 1 and words[0] == VALUES_COMPLETION.tag:
+            yield from _from_list(words[1], VALUE_TYPES_COMPLETION)
+        elif index == 2 and words[1] in (VALUES_LS_COMPLETION.tag, VALUES_RM_COMPLETION.tag):
+            root_item = self.root_cache[None]
+            for param_name in root_item.params_with_cached_values:
+                if param_name.startswith(words[2]):
+                    yield CompletionItem(
+                        tag=param_name,
+                        description=None
+                    )
+        elif index == 3 and words[1] == VALUES_RM_COMPLETION.tag:
+            yield from self.get_completions_for_values_for_param(
+                param_name=words[2],
+                prefix=words[3],
+                always_return_something=False
+            )
+        else:
+            return []
+
+    def get_ls_values_for_param(self, param_name: str) -> Iterable[str]:
+        values: List[ArgValue] = self.arg_value_cache.get(param_name, [])
+        for value in values:
+            if any(isinstance(value, t) for t in (str, int, float)):
+                yield str(value)
+            else:
+                yield json.dumps(value)
+
+    def remove_cached_value_for_param(self, param_name: str, value: str) -> None:
+        existing_values = self.arg_value_cache[param_name]
+        new_values: List[ArgValue] = []
+        for existing_value in existing_values:
+            if any(isinstance(existing_value, t) for t in (str, int, float)):
+                existing_value_str = str(existing_value)
+            else:
+                existing_value_str = json.dumps(existing_value)
+            if existing_value_str != value:
+                new_values.append(existing_value_str)
+        self.arg_value_cache[param_name] = new_values
+
+        if len(new_values) == 0:
+            # remove from the list of params with cached values
+            root_cache_item = self.root_cache[None]
+            root_cache_item.params_with_cached_values = [
+                p for p in root_cache_item.params_with_cached_values if p != param_name
+            ]
+            self.root_cache[None] = root_cache_item
 
 
 def get_width():
@@ -838,41 +961,71 @@ def get_command_epilogue() -> str:
     return return_str
 
 
-ZSH_COMPLETION = 'zsh-completion'
-ZSH_PRINT_SCRIPT = 'zsh-print-script'
+ZSH_COMPLETION_ITEM = CompletionItem('zsh-completion', 'Return completions for zsh')
+ZSH_PRINT_SCRIPT_COMPLETION = CompletionItem('zsh-print-script', 'Print the zsh script that enables completions')
+VALUES_COMPLETION = CompletionItem('cached-values', 'Utilities to help with cached values for completions')
+VALUES_PARAMS_COMPLETION = CompletionItem('params', 'List all the param names that have values cached')
+VALUES_LS_COMPLETION = CompletionItem('ls', 'List all the values cached for a particular param')
+VALUES_RM_COMPLETION = CompletionItem('rm', 'Remove a value for an param from the cache for completions')
+UTIL_TYPE_COMPLETIONS = [
+    ZSH_COMPLETION_ITEM,
+    ZSH_PRINT_SCRIPT_COMPLETION,
+    VALUES_COMPLETION
+]
+
+VALUE_TYPES_COMPLETION = [
+    VALUES_PARAMS_COMPLETION,
+    VALUES_LS_COMPLETION,
+    VALUES_RM_COMPLETION
+]
+
+VALUES_SUBPARSER_DEST = 'cached_values_type'
 
 
-def add_util_parser(parser: Any) -> Any:
+def add_utils_parser(parser: Any) -> Any:
+    # type annotations "Any" because argparse.subparser doesn't have
+    # nice typs
     util_parser: argparse.ArgumentParser = parser.add_parser(
         UTILS_COMPLETION_ITEM.tag, description=UTILS_COMPLETION_ITEM.description
     )
     util_type_subparsers = util_parser.add_subparsers(dest='util_type', required=True)
 
-    zsh_completion_parser = util_type_subparsers.add_parser(ZSH_COMPLETION, description='Return completions')
+    zsh_completion_parser = util_type_subparsers.add_parser(
+        ZSH_COMPLETION_ITEM.tag, description=ZSH_COMPLETION_ITEM.description
+    )
     zsh_completion_parser.add_argument('word_index', type=int)
     zsh_completion_parser.add_argument('line')
 
-    util_type_subparsers.add_parser(ZSH_PRINT_SCRIPT, description='Print the zsh script that enables completions')
+    util_type_subparsers.add_parser(ZSH_PRINT_SCRIPT_COMPLETION.tag,
+                                    description=ZSH_PRINT_SCRIPT_COMPLETION.description)
+
+    values_parser = util_type_subparsers.add_parser(
+        VALUES_COMPLETION.tag, description=VALUES_COMPLETION.description
+    )
+
+    values_subparsers = values_parser.add_subparsers(dest=VALUES_SUBPARSER_DEST)
+    values_subparsers.add_parser(VALUES_PARAMS_COMPLETION.tag, description=VALUES_PARAMS_COMPLETION.description)
+
+    values_ls_parser = values_subparsers.add_parser(VALUES_LS_COMPLETION.tag,
+                                                    description=VALUES_LS_COMPLETION.description)
+    values_ls_parser.add_argument('param_name', help='Name of parameter to get cached values for')
+
+    values_rm_parser = values_subparsers.add_parser(VALUES_RM_COMPLETION.tag,
+                                                    description=VALUES_RM_COMPLETION.description)
+    values_rm_parser.add_argument('param_name', help='Name of parameter to get cached values for')
+    values_rm_parser.add_argument('value', help='Cached value to remove')
 
     return parser
 
 
 def namespace_to_zsh_completion_args(namespace: argparse.Namespace) -> Optional[CompletionArgs]:
-    if namespace.util_type == ZSH_COMPLETION:
+    if namespace.util_type == ZSH_COMPLETION_ITEM.tag:
         return CompletionArgs(
             word_index=namespace.word_index,
             line=namespace.line
         )
     else:
         return None
-
-
-ArgValue = Union[str, int, float, Dict[str, 'ArgValue'], List['ArgValue']]
-
-
-ArgPairs = List[Tuple[CarlParam, ArgValue]]
-
-MAX_HISTORY = 200
 
 
 class ArgCache(FileCache[str, List[ArgValue]]):
@@ -884,19 +1037,6 @@ class ArgCache(FileCache[str, List[ArgValue]]):
 
     def freeze_key(self, key: str) -> str:
         return key
-
-
-arg_value_cache = ArgCache('arg_values')
-
-
-def cache_param_arg_pairs(param_args: ArgPairs) -> None:
-    for param, value in param_args:
-        key = param.name
-        arg_history: List[ArgValue] = arg_value_cache.get(key, [])
-
-        new_history: List[ArgValue] = [value] + [a for a in arg_history if a != value]
-        new_history = new_history[:MAX_HISTORY]
-        arg_value_cache[key] = new_history
 
 
 def format_post_data(param_args: ArgPairs) -> Tuple[List[str], ArgPairs]:

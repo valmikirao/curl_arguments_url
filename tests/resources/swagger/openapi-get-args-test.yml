@@ -76,7 +76,7 @@ paths:
                     A:
                       type: integer
                     B:
-                      type: integer
+                      type: string
                 array_nested:
                   type: array
                   items:

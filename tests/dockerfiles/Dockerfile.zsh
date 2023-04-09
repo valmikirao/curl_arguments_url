@@ -1,5 +1,6 @@
 # NOTE, this is meant to be built with the source-root as the context
-FROM python:3.7-slim
+ARG PYTHON_VERSION=3.11
+FROM python:${PYTHON_VERSION}-slim
 
 WORKDIR /app
 

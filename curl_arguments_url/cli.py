@@ -2,6 +2,7 @@
 import sys
 import shlex
 import subprocess
+from typing import List
 
 from curl_arguments_url.curl_arguments_url import SwaggerRepo
 
@@ -20,13 +21,39 @@ _carl_test_completion() {
 
     completions=("${(@f)$(carl utils zsh-completion "$CURRENT" "${words[*]}")}")
 
-    if [ -n "completions" ]; then
+    if [ -n "$completions" ]; then
         _describe -V unsorted completions -U
     fi
 }
 
 compdef _carl_test_completion carl;
 """
+
+
+def line_to_words(line: str) -> List[str]:
+    """
+    Parses the original line.  Preferrables, zsh would do this for you but de-escaping the values is challenging
+    to say the least.  At least here I can write unit tests.  I'm basically allowing shlex to do all the work except
+    if there is an open quote or a trailing "\"
+    """
+    if line[-1] == '\\':
+        # trailing backslashes would cause errors
+        line_ = line[:-1]
+    else:
+        line_ = line
+
+    for suffix in ('', "'", '"'):
+        # Try parsing.  If first it doesn't succeed, try with a closing quote, since that might be the problem
+        try:
+            return shlex.split(line_ + suffix)
+        except ValueError:
+            pass
+
+    # hopefulling don't get here, but in case we do, raise an honest exception which shows the problem with the
+    # original string
+    shlex.split(line)
+
+    raise Exception("Shouldn't get here, but this exception keeps mypy happy")
 
 
 def main():
@@ -49,7 +76,7 @@ def main():
     else:
         if generic_args.zsh_completion_args is not None:
             index = generic_args.zsh_completion_args.word_index - 1
-            words = shlex.split(generic_args.zsh_completion_args.line)
+            words = line_to_words(generic_args.zsh_completion_args.line)
             completions = swagger.get_completions(
                 index=index,
                 words=words
@@ -62,6 +89,17 @@ def main():
                     print(tag)
         elif generic_args.zsh_print_script:
             print(ZSH_SCRIPT)
+        elif generic_args.values_list_params:
+            for param in swagger.get_params_with_cached_values():
+                print(param)
+        elif generic_args.values_ls_for_param is not None:
+            for value in swagger.get_ls_values_for_param(generic_args.values_ls_for_param):
+                print(value)
+        elif generic_args.values_rm_args is not None:
+            param_name = generic_args.values_rm_args.param_name
+            value = generic_args.values_rm_args.value
+            swagger.remove_cached_value_for_param(param_name, value)
+            print(f"Value {value!r} removed for param +{param_name}")
         else:
             raise NotImplementedError()
 

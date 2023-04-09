@@ -5,18 +5,27 @@ import os.path
 
 from setuptools import setup, find_packages
 
+m2r_installed = False
+version = '0.1.0'
+
+try:
+    import m2r  # type: ignore
+    m2r_installed = True
+except ModuleNotFoundError:
+    pass
+
 
 def _read_file(file: str) -> str:
     # we only needs these files if we're publishing
-    if os.path.exists(file):
-        with open(file) as readme_file:
-            return readme_file.read()
+    if m2r_installed and os.path.exists(file):
+        with open(file) as f:
+            raw_file = f.read()
+        return m2r.convert(raw_file)
     else:
         return 'N/A'
 
 
-readme = _read_file('README.rst')
-history = _read_file('HISTORY.rst')
+readme = _read_file('README.md')
 
 requirements = [
     'PyYAML>=6.0.0,<7.0.0',
@@ -47,13 +56,12 @@ setup(
     },
     install_requires=requirements,
     license="Apache Software License 2.0",
-    long_description=readme + '\n\n' + history,
+    long_description=readme,
     include_package_data=True,
     keywords='curl_arguments_url,carl',
     name='curl_arguments_url',
     packages=find_packages(include=['curl_arguments_url', 'curl_arguments_url.*']),
-    test_suite='tests',
     url='https://github.com/valmikirao/curl_arguments_url',
-    version='0.1.0',
+    version=version,
     zip_safe=False,
 )

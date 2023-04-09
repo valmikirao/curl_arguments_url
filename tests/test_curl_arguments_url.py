@@ -39,11 +39,11 @@ from curl_arguments_url.curl_arguments_url import SwaggerRepo, CompletionItem
          '--data-binary', '{"arg_one": "val_one", "arg_two": 2}'
     ]),
     ('fake.com/posting/raw/stuff POST +arg_list one +arg_list two +arg_list_int 1'.split(' ') + [
-        '+arg_nested', '{"A": 1, "B": 2}', '+array_nested', '[1, 2]', '[3, 4]'
+        '+arg_nested', '{"A": 1, "B": "two"}', '+array_nested', '[1, 2]', '[3, 4]'
     ], 'curl -X POST fake.com/posting/raw/stuff'.split(' ') + [
         '-H', 'Content-Type: application/json',
         '--data-binary',
-        '{"arg_list": ["one", "two"], "arg_list_int": [1], "arg_nested": {"A": 1, "B": 2},'
+        '{"arg_list": ["one", "two"], "arg_list_int": [1], "arg_nested": {"A": 1, "B": "two"},'
         ' "array_nested": [[1, 2], [3, 4]]}'
     ]),
     ('fake.com/{arg}/in/path/and/body POST +arg:PATH path_value +arg:BODY body_value'.split(' '),
@@ -111,32 +111,44 @@ TestGetCompletionsCase = Tuple[int, List[str], List[CompletionItem]]
 
 class TestGetCompletionsParametrize:
     UPPER_AND_LOWER_CASES = [
-            (1, ['carl', 'fake.com'], ALL_URL_COMPLETIONS),
-            (1, ['carl', 'u'], [CompletionItem('utils', 'Utilities')]),
-            (1, ['carl', 'fake.com/posting/'], POSTING_URL_COMPLETIONS),
-            (2, ['carl', 'fake.com/completer', ''], ALL_METHOD_COMPLETIONS),
-            (2, ['carl', 'fake.com/completer', 'P'], P_PREFIXED_METHOD_COMPLETIONS),
-            (2, ['carl', 'fake.com/completer', 'GET'], [GET_COMPLETION]),
-            (3, ['carl', 'fake.com/completer', 'GET', '+'], ALL_ARG_COMPLETIONS),
-            (3, ['carl', 'fake.com/completer', 'GET', '+foo'], FOO_PREFIXED_COMPLETIONS),
-            (3, ['carl', 'fake.com/completer', 'GET', '+foobar'], [FOOBAR_COMPLETION]),
-            (5, ['carl', 'fake.com/completer', 'GET', '+barfoo', 'foo', '+foo'], FOO_PREFIXED_COMPLETIONS),
-            (3, ['carl', 'fake.com/{arg}/in/path/and/body', 'POST', '+'], ARG_PATH_AND_BODY_COMPLETIONS),
-            (4, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', ''], [
-                CompletionItem(tag=t, description=None) for t in (
-                    'bar-thing', 'barfoo-thing', 'foo-thing', 'foobar-thing'
-                )
-            ]),
-            (7, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', 'block', '+bang', 'bar', 'foo'], [
-                CompletionItem(tag=t, description=None) for t in ('foo-bang', 'foobar-bang')
-            ]),
-            (3, ['carl', 'fake.com/completer', 'POST', '-'], ALL_GENERIC_COMPLETIONS),
-            (5, ['carl', 'fake.com/completer', 'POST', '+foo', 'some-val', '-'], ALL_GENERIC_COMPLETIONS)
+        (1, ['carl', 'fake.com'], ALL_URL_COMPLETIONS),
+        (1, ['carl', 'u'], [CompletionItem('utils', 'Utilities')]),
+        (1, ['carl', 'fake.com/posting/'], POSTING_URL_COMPLETIONS),
+        (2, ['carl', 'fake.com/completer', ''], ALL_METHOD_COMPLETIONS),
+        (2, ['carl', 'fake.com/completer', 'P'], P_PREFIXED_METHOD_COMPLETIONS),
+        (2, ['carl', 'fake.com/completer', 'GET'], [GET_COMPLETION]),
+        (3, ['carl', 'fake.com/completer', 'GET', '+'], ALL_ARG_COMPLETIONS),
+        (3, ['carl', 'fake.com/completer', 'GET', '+foo'], FOO_PREFIXED_COMPLETIONS),
+        (3, ['carl', 'fake.com/completer', 'GET', '+foobar'], [FOOBAR_COMPLETION]),
+        (5, ['carl', 'fake.com/completer', 'GET', '+barfoo', 'foo', '+foo'], FOO_PREFIXED_COMPLETIONS),
+        (3, ['carl', 'fake.com/{arg}/in/path/and/body', 'POST', '+'], ARG_PATH_AND_BODY_COMPLETIONS),
+        (4, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', ''], [
+            CompletionItem(tag=t, description=None) for t in (
+                'bar-thing', 'barfoo-thing', 'foo-thing', 'foobar-thing'
+            )
+        ]),
+        (7, ['carl', 'fake.com/{thing}/do', 'GET', '+thing', 'block', '+bang', 'bar', 'foo'], [
+            CompletionItem(tag=t, description=None) for t in ('foo-bang', 'foobar-bang')
+        ]),
+        (3, ['carl', 'fake.com/completer', 'POST', '-'], ALL_GENERIC_COMPLETIONS),
+        (5, ['carl', 'fake.com/completer', 'POST', '+foo', 'some-val', '-'], ALL_GENERIC_COMPLETIONS),
+        (3, ['carl', 'utils', 'cached-values', ''], [
+            CompletionItem(tag='ls', description='List all the values cached for a particular param'),
+            CompletionItem(tag='params', description='List all the param names that have values cached'),
+            CompletionItem(tag='rm', description='Remove a value for an param from the cache for completions')
+        ]),
+        (5, ['carl', 'utils', 'cached-values', 'rm', 'bang', 'foo'], [
+            CompletionItem(tag=t, description=None) for t in ('foo-bang', 'foobar-bang')
+        ]),
+        (4, ['carl', 'fake.com/posting/raw/stuff', 'POST', '+arg_nested', '{"A": 1, "B": "foo'], [
+            CompletionItem(tag='{"A": 1, "B": "foo-B-nested"}', description=None),
+            CompletionItem(tag='{"A": 1, "B": "foobar-B-nested"}', description=None),
+        ])
     ]
     SIMPLE_CASES = [
-            (4, ['carl', 'fake.com/completer', 'POST', '+foo', 'not-in-cache'], [
-                CompletionItem(tag='not-in-cache', description=None)
-            ]),
+        (4, ['carl', 'fake.com/completer', 'POST', '+foo', 'not-in-cache'], [
+            CompletionItem(tag='not-in-cache', description=None)
+        ]),
     ]
 
     @classmethod
@@ -154,18 +166,63 @@ class TestGetCompletionsParametrize:
             yield case
 
 
-@pytest.mark.usefixtures('make_value_cache_ephemeral')
+@pytest.mark.usefixtures('cache_param_values')
 @pytest.mark.parametrize('index,words,expected', TestGetCompletionsParametrize.get_cases())
 def test_get_completions(swagger_model: SwaggerRepo, index: int, words: List[str],
                          expected: List[Tuple[str, Optional[str]]]):
 
-    # get some values in the cache
-    arg_value_prefixes = ['foo', 'bar', 'foobar', 'barfoo']
-    for prefix in arg_value_prefixes:
-        swagger_model.cli_args_to_cmd([
-            'fake.com/{thing}/do', 'GET',
-            '+thing', f"{prefix}-thing", '+bang', f"{prefix}-bang"
-        ])
-
     actual = swagger_model.get_completions(index, words)
     assert list(actual) == expected
+
+
+@pytest.mark.usefixtures('cache_param_values')
+def test_get_params_with_cached_values(swagger_model: SwaggerRepo):
+    expected = ['arg_list', 'arg_nested', 'bang', 'thing']
+    actual = swagger_model.get_params_with_cached_values()
+    assert actual == expected
+
+
+@pytest.mark.usefixtures('cache_param_values')
+@pytest.mark.parametrize('remove_values,remaining_values,remaining_params', [
+    (['barfoo-bang'], ['foobar-bang', 'bar-bang', 'foo-bang'], ['arg_list', 'arg_nested', 'bang', 'thing']),
+    (['barfoo-bang', 'foobar-bang', 'bar-bang', 'foo-bang'], [''], ['arg_list', 'arg_nested', 'thing']),
+])
+def test_remove_param_cached_value(swagger_model: SwaggerRepo, remove_values: List[str], remaining_values: List[str],
+                                   remaining_params: List[str]):
+    initial_params = ['arg_list', 'arg_nested', 'bang', 'thing']
+    actual_params = swagger_model.get_params_with_cached_values()
+    assert actual_params == initial_params
+
+    initial_values = ['barfoo-bang', 'foobar-bang', 'bar-bang', 'foo-bang']
+    values_for_bang = swagger_model.get_completions_for_values_for_param('bang', prefix='')
+    assert [v.tag for v in values_for_bang] == initial_values
+
+    for value_to_remove in remove_values:
+        swagger_model.remove_cached_value_for_param('bang', value_to_remove)
+
+    actual_remaining_values = swagger_model.get_completions_for_values_for_param('bang', prefix='')
+    assert [v.tag for v in actual_remaining_values] == remaining_values
+
+    actual_remaining_params = swagger_model.get_completions_for_values_for_param('bang', prefix='')
+    assert [v.tag for v in actual_remaining_params] == remaining_values
+
+
+@pytest.mark.usefixtures('cache_param_values')
+def test_remove_complex_value(swagger_model: SwaggerRepo):
+    initial_values = [
+        '{"A": 1, "B": "barfoo-B-nested"}',
+        '{"A": 1, "B": "foobar-B-nested"}',
+        '{"A": 1, "B": "bar-B-nested"}',
+        '{"A": 1, "B": "foo-B-nested"}'
+    ]
+    actual_initial_values = swagger_model.get_completions_for_values_for_param('arg_nested', prefix='')
+    assert [v.tag for v in actual_initial_values] == initial_values
+
+    swagger_model.remove_cached_value_for_param('arg_nested', '{"A": 1, "B": "foobar-B-nested"}')
+    remaining_values = [
+        '{"A": 1, "B": "barfoo-B-nested"}',
+        '{"A": 1, "B": "bar-B-nested"}',
+        '{"A": 1, "B": "foo-B-nested"}'
+    ]
+    actual_remaining_values = swagger_model.get_completions_for_values_for_param('arg_nested', prefix='')
+    assert [v.tag for v in actual_remaining_values] == remaining_values

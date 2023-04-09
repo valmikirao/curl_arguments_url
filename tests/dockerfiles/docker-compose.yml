@@ -6,10 +6,12 @@ services:
       dockerfile: Dockerfile.flask
       context: .
     volumes:
-      - "./flask_src:/app"
+      - ./flask_src:/app
   carl-zsh:
     build:
       dockerfile: tests/dockerfiles/Dockerfile.zsh
       context: ../..
+    volumes:
+      - ../..:/app
 
 
