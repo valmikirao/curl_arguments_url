@@ -1,4 +1,5 @@
 import traceback
+from enum import Enum
 from urllib.parse import parse_qs
 
 import flask
@@ -7,10 +8,26 @@ from flask import Flask
 app = Flask(__name__)
 
 
-@app.route('/<path:path>', methods=['GET', 'POST'])
+class Method(Enum):
+    # unfortunate copy-pasta from curl_arguments_url.py, but that code
+    # is not available here
+    GET = 'GET'
+    PUT = 'PUT'
+    POST = 'POST'
+    DELETE = 'DELETE'
+    OPTIONS = 'OPTIONS'
+    HEAD = 'HEAD'
+    PATCH = 'PATCH'
+    TRACE = 'TRACE'
+
+
+@app.route('/<path:path>', methods=list(Method.__members__.keys()))
 def hello_world(path: str):
     try:
-        return_dict = {'path': path}
+        return_dict = {
+            'path': path,
+            'method': flask.request.method
+        }
         if flask.request.query_string:
             return_dict['query'] = parse_qs(flask.request.query_string.decode())
         if flask.request.content_type == 'application/json':

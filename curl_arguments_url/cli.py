@@ -49,7 +49,7 @@ def line_to_words(line: str) -> List[str]:
         except ValueError:
             pass
 
-    # hopefulling don't get here, but in case we do, raise an honest exception which shows the problem with the
+    # hopefully don't get here, but in case we do, raise an honest exception which shows the problem with the
     # original string
     shlex.split(line)
 

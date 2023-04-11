@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 
 """Tests for `curl_arguments_url` package."""
+import argparse
+import io
+import itertools
+import re
+import sys
 from copy import deepcopy
 from typing import List, Tuple, Optional, Iterable
+from unittest.mock import MagicMock
 
 import pytest
 
-from curl_arguments_url.curl_arguments_url import SwaggerRepo, CompletionItem
+from curl_arguments_url.curl_arguments_url import SwaggerRepo, CompletionItem, GENERIC_OPTIONAL_ARGS
 
 
 @pytest.mark.parametrize('args,expected_cmd', [
@@ -50,12 +56,88 @@ from curl_arguments_url.curl_arguments_url import SwaggerRepo, CompletionItem
      'curl -X POST fake.com/path_value/in/path/and/body'.split(' ') + [
          '-H', 'Content-Type: application/json',
          '--data-binary', '{"arg": "body_value"}'
-    ])
+    ]),
+    ('fake.com/required/{path-arg} GET -nR +optional-arg value'.split(),
+     'curl -X GET fake.com/required/?optional-arg=value'.split())
 ])
 def test_cli_args_to_cmd(swagger_model: SwaggerRepo, args: List[str], expected_cmd: List[str]):
     cmd, _ = swagger_model.cli_args_to_cmd(args)
-
     assert cmd == expected_cmd
+
+
+class MockArgParseError(Exception):
+    pass
+
+
+def test_cli_args_to_cmd_missing_required(swagger_model: SwaggerRepo, monkeypatch):
+    monkeypatch.setattr(argparse.ArgumentParser, 'error', MagicMock(side_effect=MockArgParseError()))
+
+    cli_args = 'fake.com/required/{path-arg} GET -n +optional-arg value'.split()
+    try:
+        swagger_model.cli_args_to_cmd(cli_args)
+        raise AssertionError('Shouln\'t get here: should error out')
+    except MockArgParseError:
+        # errored as expected
+        pass
+
+
+ALL_PATHS = [
+    '/completer',
+    '/dashed/arg/name',
+    '/get',
+    '/has/multiple/methods',
+    '/need/a/header/{for}/this',
+    '/posting/raw/stuff',
+    '/posting/stuff',
+    '/required/{path-arg}',
+    '/{arg}/in/path/and/body',
+    '/{bad-thing}/do',
+    '/{thing}/do'
+]
+
+ALL_SERVERS = [
+    'fake.com',
+    'http://fake.com'
+]
+
+ALL_URLS = [serv + path for serv, path in itertools.product(ALL_SERVERS, ALL_PATHS)]
+
+
+GENERIC_OPTIONAL_NAME_OR_FLAGS = list(itertools.chain(*(a.name_or_flags for a in GENERIC_OPTIONAL_ARGS)))
+GENERIC_OPTIONAL_HELPS = [a.kwargs['help'] for a in GENERIC_OPTIONAL_ARGS]
+PARAM_ARGS = [r'\+foo', r'\+foobar', r'\+bar', r'\+barfoo']
+PARAM_ARGS_HELP = [r'Foo\!', r'Bar\!']
+
+
+def escape_help_re(help_text: str) -> str:
+    help_text = re.escape(help_text)
+    # don't care about whitespace.  Note: The above escapes the whitespace, so the regex accounts for that
+    help_text = re.sub(r'(\\\s)+', lambda _: r'\s+', help_text)
+    return help_text
+
+
+@pytest.mark.parametrize('args,expected_regexes', [  # expected is a list of regexes to match to
+    (['--help'], ALL_URLS),
+    (['fake.com/completer', '--help'], ['GET', 'POST', 'DELETE', 'PATCH']),
+    (['fake.com/completer', 'GET', '--help'],
+     GENERIC_OPTIONAL_NAME_OR_FLAGS
+     + [escape_help_re(h) for h in GENERIC_OPTIONAL_HELPS]
+     + PARAM_ARGS + PARAM_ARGS_HELP)
+])
+def test_help(swagger_model: SwaggerRepo, monkeypatch, args: List[str], expected_regexes: List[str]):
+    output_io = io.StringIO()
+    with monkeypatch.context() as monkypatch_:
+        monkypatch_.setattr(sys, 'stdout', output_io)
+        try:
+            swagger_model.cli_args_to_cmd(args)
+        except SystemExit:
+            pass
+
+    actual_output = output_io.getvalue()
+
+    assert len(expected_regexes) > 1
+    for expected_regex in expected_regexes:
+        assert re.search(expected_regex, actual_output), f"Did not find {expected_regex!r} in output"
 
 
 POSTING_URL_COMPLETIONS = [
@@ -69,6 +151,7 @@ ALL_URL_COMPLETIONS = [
     CompletionItem(tag='fake.com/has/multiple/methods', description='Path Summary'),
     CompletionItem(tag='fake.com/need/a/header/{for}/this', description='Testing Spec'),
     *POSTING_URL_COMPLETIONS,
+    CompletionItem(tag='fake.com/required/{path-arg}', description='Testing Spec'),
     CompletionItem(tag='fake.com/{arg}/in/path/and/body', description='Testing Spec'),
     CompletionItem(tag='fake.com/{bad-thing}/do', description='Testing Spec'),
     CompletionItem(tag='fake.com/{thing}/do', description='Testing Spec')
@@ -99,10 +182,20 @@ ARG_PATH_AND_BODY_COMPLETIONS = [
     CompletionItem(tag='+arg:PATH', description=None),
 ]
 ALL_GENERIC_COMPLETIONS = [
+    CompletionItem(
+        tag='--no-requires',
+        description="Don't check to see if required parameter values are missing or if values are one of the"
+                    " enumerated values"
+    ),
     CompletionItem(tag='--no-run', description="Don't run the curl command.  Useful with -p"),
     CompletionItem(tag='--print-cmd', description='Print the resulting curl command to standard out'),
+    CompletionItem(
+        tag='-R',
+        description="Don't check to see if required parameter values are missing or if values are one of the"
+                    " enumerated values"
+    ),
     CompletionItem(tag='-n', description="Don't run the curl command.  Useful with -p"),
-    CompletionItem(tag='-p', description='Print the resulting curl command to standard out'),
+    CompletionItem(tag='-p', description='Print the resulting curl command to standard out')
 ]
 
 
@@ -143,6 +236,12 @@ class TestGetCompletionsParametrize:
         (4, ['carl', 'fake.com/posting/raw/stuff', 'POST', '+arg_nested', '{"A": 1, "B": "foo'], [
             CompletionItem(tag='{"A": 1, "B": "foo-B-nested"}', description=None),
             CompletionItem(tag='{"A": 1, "B": "foobar-B-nested"}', description=None),
+        ]),
+        (4, ['carl', 'fake.com/completer', 'DELETE', '+foo', ''], [
+            CompletionItem(tag=t, description=None) for t in ('bar1', 'bar2', 'foo1', 'foo2')
+        ]),
+        (4, ['carl', 'fake.com/completer', 'DELETE', '+foo', 'ba'], [
+            CompletionItem(tag=t, description=None) for t in ('bar1', 'bar2')
         ])
     ]
     SIMPLE_CASES = [

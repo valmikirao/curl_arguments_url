@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from hashlib import md5
 from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, \
-    Callable, Any, Set, MutableMapping, cast
+    Callable, Any, MutableMapping, cast
 
 from jsonref import replace_refs as replace_json_refs  # type: ignore
 from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter, PathItem
@@ -23,6 +23,8 @@ from urllib.parse import urlencode
 import yaml
 
 REMAINING_ARG = 'passed_to_curl'
+
+ParamValue = Union[str, int, float, Dict[str, Any], List[Any]]
 
 
 class EnvVariable:
@@ -156,6 +158,9 @@ class ArgTypeModel(BaseModel):
     def converter(self, value: str) -> Any:
         return ARG_TYPE_FUNCS[self.type_](value)
 
+    def default(self) -> ParamValue:
+        return ARG_TYPE_DEFAULTS[self.type_]
+
 
 ARG_TYPE_FUNCS: Dict[ArgTypeEnum, ArgType] = {
     ArgTypeEnum.string: str,
@@ -165,12 +170,25 @@ ARG_TYPE_FUNCS: Dict[ArgTypeEnum, ArgType] = {
     ArgTypeEnum.json: json.loads
 }
 
+ARG_TYPE_DEFAULTS: Dict[ArgTypeEnum, ParamValue] = {
+    ArgTypeEnum.string: '',
+    ArgTypeEnum.integer: 0,
+    ArgTypeEnum.number: 0.0,
+    ArgTypeEnum.boolean: False,
+    ArgTypeEnum.json: {}
+}
+
 
 class ParamType(Enum):
     query = 'query'
     path = 'path'
     header = 'header'
     json_body = 'json_body'
+
+
+class CarlParamReference(NamedTuple):
+    param_name: str
+    param_type: Optional[ParamType]
 
 
 BODY_ARG_SUFFIX = 'BODY'
@@ -183,6 +201,7 @@ class CarlParam(BaseModel):
     required_: bool = False
     type_: ArgTypeModel = ArgTypeModel(type_=ArgTypeEnum.string)
     include_location: bool = False
+    enums: Optional[List[ParamValue]] = None
 
     @validator('required_', pre=True)
     def required(cls, v: Any) -> bool:
@@ -199,50 +218,73 @@ class CarlParam(BaseModel):
             return f"+{self.name}:{type_str}"
 
     @classmethod
-    def param_name_from_arg_name(cls, arg_name: str) -> str:
+    def param_ref_from_arg_name(cls, arg_name: str) -> CarlParamReference:
         param_name = arg_name
         if param_name.startswith('+'):
             # strip leading '+'
             param_name = param_name[1:]
-        param_type: ParamType
-        for param_type in ParamType.__members__.values():
-            if param_type == ParamType.json_body:
+        param_type: Optional[ParamType] = None
+        possible_param_type: ParamType
+        for possible_param_type in ParamType.__members__.values():
+            if possible_param_type == ParamType.json_body:
                 suffix = BODY_ARG_SUFFIX
             else:
-                suffix = param_type.value.upper()
+                suffix = possible_param_type.value.upper()
             if param_name.endswith(f":{suffix}"):
                 # strip the suffix
                 param_name = param_name[:-len(suffix)]
+                param_type = possible_param_type
 
-        return param_name
+        return CarlParamReference(
+            param_name=param_name,
+            param_type=param_type
+        )
 
 
 EndpointParams = Dict[str, List[CarlParam]]
 
-ArgValue = Union[str, int, float, Dict[str, 'ArgValue'], List['ArgValue']]
-
-
-ArgPairs = List[Tuple[CarlParam, ArgValue]]
-
 MAX_HISTORY = 200
 
+ArgPairs = List[Tuple[CarlParam, ParamValue]]
 
-class ParamArg(Generic[T]):
+
+class ParamArg():
     """
     Makes it so you can have `+foo a +foo b` and `+foo a b`
     """
 
     param: CarlParam
-    values: List[T]
+    values: List[ParamValue]
 
-    def __init__(self, param: CarlParam, value_lookup: Optional[Set[str]] = None):
+    def __init__(self, param: CarlParam, values: Optional[Iterable[ParamValue]] = None):
         self.param = param
-        self.values = []
+        if values:
+            self.values = list(values)
+        else:
+            self.values = []
 
     def type_(self, val: str) -> 'ParamArg':
         self.values.append(self.param.type_.converter(val))
 
         return self
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, type(self)):
+            return self.param is other.param and self.values == other.values
+        else:
+            return False
+
+    def __repr__(self):
+        if len(self.values) == 1:
+            return param_value_to_str(self.values[0])
+        else:
+            return repr([param_value_to_str(v) for v in self.values])
+
+    def __hash__(self) -> int:
+        return hash(json.dumps({
+            'param': self.param.json(),
+            'values': [param_value_to_str(v) for v in self.values]
+        }))
 
 
 class SwaggerModel:
@@ -291,7 +333,8 @@ class SwaggerEndpoint:
                 # print(f"Warning: Parameter +{param_name} is in url but not explicitly declared", file=sys.stderr)
                 params[param_name].append(CarlParam(
                     name=param_name,
-                    param_type=ParamType.path
+                    param_type=ParamType.path,
+                    required_=True
                 ))
 
         for name, params_with_same_name in params.items():
@@ -305,7 +348,7 @@ class SwaggerEndpoint:
             else:
                 self.params[name] = params_with_same_name
 
-    def add_args_from_params(self, parser: argparse.ArgumentParser) \
+    def add_args_from_params(self, parser: argparse.ArgumentParser, use_requires: bool) \
             -> argparse.ArgumentParser:
         """
         Note: this is a very crude approximation of the swagger param model.
@@ -315,8 +358,20 @@ class SwaggerEndpoint:
             for param in params_for_name:
                 nargs: Union[int, Literal['+']] = '+' if param.type_.is_array else 1
                 arg_name = param.get_arg_name()
-                parser.add_argument(arg_name, type=ParamArg(param).type_, required=param.required_, nargs=nargs,
-                                    help=param.description)
+                choices: Optional[str]
+                if use_requires and param.enums:
+                    enums = [ParamArg(param, [e]) for e in param.enums]
+                else:
+                    enums = None
+                required = use_requires and param.required_
+                parser.add_argument(
+                    arg_name,
+                    type=ParamArg(param).type_,
+                    required=required,
+                    choices=enums,
+                    nargs=nargs,
+                    help=param.description
+                )
 
         return parser
 
@@ -490,12 +545,18 @@ class SwaggerRepo:
                             for parameter in operation.parameters or []:
                                 if isinstance(parameter, Parameter):
                                     param_type = self.schema_to_arg_type(parameter.param_schema)
+                                    enums: Optional[ParamValue]
+                                    if isinstance(parameter.param_schema, Schema):
+                                        enums = parameter.param_schema.enum
+                                    else:
+                                        enums = None
                                     parameters.append(CarlParam(
                                         name=parameter.name,
                                         param_type=ParamType(parameter.param_in),
                                         description=parameter.description,
                                         required_=parameter.required,
-                                        type_=param_type
+                                        type_=param_type,
+                                        enums=enums
                                     ))
                                 else:  # is a Reference
                                     # Hopefully we have already resolved the references
@@ -593,15 +654,18 @@ class SwaggerRepo:
                         carl_param_type = self.schema_to_arg_type(prop_schema)
                         if isinstance(prop_schema, Schema):
                             description = prop_schema.description
+                            enums = prop_schema.enum
                         else:
                             description = None
+                            enums = None
 
                         yield CarlParam(
                             name=prop_name,
                             param_type=ParamType.json_body,
                             description=description,
                             required_=(prop_name in required_props),
-                            type_=carl_param_type
+                            type_=carl_param_type,
+                            enums=enums
                         )
                 else:
                     # Can't handle these yet
@@ -672,9 +736,11 @@ class SwaggerRepo:
                 raise AssertionError('Should not make it here')
         else:
             url_desc = valid_url_chosen.description or valid_url_chosen.summary
+            use_requires = get_use_requires(cli_args)
             arg_parser = self.get_path_arg_parser(
                 url=valid_url_chosen.url,
                 url_desc=url_desc,
+                use_requires=use_requires
             )
 
             args = arg_parser.parse_args(cli_args)
@@ -703,9 +769,9 @@ class SwaggerRepo:
         for param, value in param_args:
             key = param.name
             param_names.append(key)
-            arg_history: List[ArgValue] = self.arg_value_cache.get(key, [])
+            arg_history: List[ParamValue] = self.arg_value_cache.get(key, [])
 
-            new_history: List[ArgValue] = [value] + [a for a in arg_history if a != value]
+            new_history: List[ParamValue] = [value] + [a for a in arg_history if a != value]
             new_history = new_history[:MAX_HISTORY]
             self.arg_value_cache[key] = new_history
         root_cache_item = self.root_cache[None]
@@ -715,7 +781,7 @@ class SwaggerRepo:
         root_cache_item.params_with_cached_values = params_with_cached_values
         self.root_cache[None] = root_cache_item
 
-    def get_path_arg_parser(self, url: str, url_desc: Optional[str] = None) \
+    def get_path_arg_parser(self, url: str, use_requires: bool, url_desc: Optional[str] = None) \
             -> argparse.ArgumentParser:
         url = url
         methods = self.methods_cache[url]
@@ -730,9 +796,10 @@ class SwaggerRepo:
             method_parser = add_generic_args(method_parser)
 
             swagger_endpoint = SwaggerEndpoint.from_cached_endpoint(endpoint)
-            method_parser = swagger_endpoint.add_args_from_params(method_parser)
+            method_parser = swagger_endpoint.add_args_from_params(method_parser, use_requires=use_requires)
 
-            method_parser.add_argument(REMAINING_ARG, nargs='*', help='Extra argument passed to curl')
+            method_parser.add_argument(REMAINING_ARG, nargs='*',
+                                       help='Extra argument passed to curl, often after "--"')
         return arg_parser
 
     def get_completions(self, index: int, words: Sequence[Optional[str]]) -> Iterable[CompletionItem]:
@@ -782,12 +849,18 @@ class SwaggerRepo:
             except ValueError:
                 return []
 
-            is_value_arg = self.get_arg_name_this_is_value_for(words_[3:index + 1])
-            if is_value_arg is None:
-                items_to_return.extend(self.get_param_completions(url, method, prefix=words_[index]))
+            param_ref = self.get_param_ref_this_is_value_for(words_[3:index + 1])
+            prefix = words_[index]
+            if param_ref is None:
+                items_to_return.extend(self.get_param_completions(url, method, prefix=prefix))
             else:
-                prefix = words_[index]
-                items_to_return.extend(self.get_completions_for_values_for_param(is_value_arg, prefix))
+                enums = self.get_enums(url, method, param_ref)
+                if enums is not None:
+                    items_to_return.extend(get_completions_from_param_values(
+                        enums, prefix=prefix
+                    ))
+                else:
+                    items_to_return.extend(self.get_completions_for_values_for_param(param_ref.param_name, prefix))
         else:
             items_to_return.append(CompletionItem(
                 tag=words_[index],
@@ -795,6 +868,31 @@ class SwaggerRepo:
             ))
 
         return sorted(items_to_return, key=lambda x: x.tag)
+
+    def get_enums(self, url: str, method: Method, param_ref: CarlParamReference) -> Optional[List[ParamValue]]:
+        cached_endpoint = self.endpoint_cache[url, Method(method)]
+        endpoint = SwaggerEndpoint.from_cached_endpoint(cached_endpoint)
+        param: Optional[CarlParam]
+        if param_ref.param_name in endpoint.params:
+            params_for_name = endpoint.params[param_ref.param_name]
+            if param_ref.param_type is not None:
+                for param_for_name in params_for_name:
+                    if param_for_name.param_type == param_ref.param_type:
+                        param = param_for_name
+                        break
+                else:
+                    param = None
+            elif len(params_for_name) == 1:
+                param = params_for_name[0]
+            else:
+                param = None
+        else:
+            param = None
+
+        if param:
+            return param.enums
+        else:
+            return None
 
     def get_completions_for_values_for_param(self, param_name: str, prefix,
                                              always_return_something: bool = True) \
@@ -812,7 +910,7 @@ class SwaggerRepo:
             items_to_return = [CompletionItem(tag=prefix, description=None)]
         return items_to_return
 
-    def get_arg_name_this_is_value_for(self, words: List[str]) -> Optional[str]:
+    def get_param_ref_this_is_value_for(self, words: List[str]) -> Optional[CarlParamReference]:
         # Get Rid of Generic Args, except from the last word
         arg_parser = argparse.ArgumentParser(add_help=False)
         arg_parser = add_generic_args(arg_parser)
@@ -831,7 +929,7 @@ class SwaggerRepo:
         else:
             for arg in reversed(remaining_args[:-1]):
                 if arg.startswith('+'):
-                    return CarlParam.param_name_from_arg_name(arg)
+                    return CarlParam.param_ref_from_arg_name(arg)
             return None
 
     def get_param_completions(self, url: str, method: Method, prefix: str):
@@ -887,21 +985,15 @@ class SwaggerRepo:
             return []
 
     def get_ls_values_for_param(self, param_name: str) -> Iterable[str]:
-        values: List[ArgValue] = self.arg_value_cache.get(param_name, [])
+        values: List[ParamValue] = self.arg_value_cache.get(param_name, [])
         for value in values:
-            if any(isinstance(value, t) for t in (str, int, float)):
-                yield str(value)
-            else:
-                yield json.dumps(value)
+            yield param_value_to_str(value)
 
     def remove_cached_value_for_param(self, param_name: str, value: str) -> None:
         existing_values = self.arg_value_cache[param_name]
-        new_values: List[ArgValue] = []
+        new_values: List[ParamValue] = []
         for existing_value in existing_values:
-            if any(isinstance(existing_value, t) for t in (str, int, float)):
-                existing_value_str = str(existing_value)
-            else:
-                existing_value_str = json.dumps(existing_value)
+            existing_value_str = param_value_to_str(existing_value)
             if existing_value_str != value:
                 new_values.append(existing_value_str)
         self.arg_value_cache[param_name] = new_values
@@ -915,6 +1007,13 @@ class SwaggerRepo:
             self.root_cache[None] = root_cache_item
 
 
+def param_value_to_str(value: ParamValue) -> str:
+    if any(isinstance(value, t) for t in (str, int, float)):
+        return str(value)
+    else:
+        return json.dumps(value)
+
+
 def get_width():
     """ This is what HelpFormatted does for default width """
     try:
@@ -924,6 +1023,16 @@ def get_width():
     width -= 2
 
     return width
+
+
+def get_completions_from_param_values(param_values: Iterable[ParamValue], prefix: str = '') -> Iterable[CompletionItem]:
+    for param_value in param_values:
+        param_value_str = param_value_to_str(param_value)
+        if param_value_str.lower().startswith(prefix.lower()):
+            yield CompletionItem(
+                tag=param_value_str,
+                description=None
+            )
 
 
 def get_command_description() -> str:
@@ -1028,12 +1137,12 @@ def namespace_to_zsh_completion_args(namespace: argparse.Namespace) -> Optional[
         return None
 
 
-class ArgCache(FileCache[str, List[ArgValue]]):
-    def freeze(self, value: List[ArgValue]) -> str:
+class ArgCache(FileCache[str, List[ParamValue]]):
+    def freeze(self, value: List[ParamValue]) -> str:
         return json.dumps(value)
 
-    def thaw(self, frozen_value: str) -> List[ArgValue]:
-        return cast(List[ArgValue], json.loads(frozen_value))
+    def thaw(self, frozen_value: str) -> List[ParamValue]:
+        return cast(List[ParamValue], json.loads(frozen_value))
 
     def freeze_key(self, key: str) -> str:
         return key
@@ -1096,6 +1205,9 @@ def format_url(url_template: str, param_args: ArgPairs) -> str:
             # We shouldn't get here, but I'm not confident endough of this to
             # put a "raise NotImplementedError()" here
             pass
+    # if --no-requires was passed, there might be some straggling path params that need to be
+    # blanks out
+    returned_url = re.sub(r'\{.*?\}', '', returned_url)
     if query_args:
         returned_url += '?' + urlencode(query_args)
 
@@ -1121,7 +1233,6 @@ def param_args_to_pairs(param_args: argparse.Namespace) -> ArgPairs:
 class ArgParserArg(NamedTuple):
     name_or_flags: List[str]
     kwargs: Dict[str, Any]
-    value_description: Optional[str] = None
 
     def add_to_parser(self, parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         parser.add_argument(*self.name_or_flags, **self.kwargs)
@@ -1137,11 +1248,21 @@ def get_url_arg(*, required: bool, urls: Optional[List[str]] = None) -> ArgParse
     return ArgParserArg(['url'], kwargs=kwargs)
 
 
+REQUIRES_ARG = ArgParserArg(
+    ['-R', '--no-requires'],
+    dict(
+        action='store_false', dest='use_requires', default=True,
+        help='Don\'t check to see if required parameter values are missing or if values are one of the enumerated'
+             ' values'
+    )
+)
+
 GENERIC_OPTIONAL_ARGS = [
     ArgParserArg(['-p', '--print-cmd'], dict(action='store_true', default=False,
                                              help='Print the resulting curl command to standard out')),
     ArgParserArg(['-n', '--no-run'], dict(action='store_false', dest='run_cmd', default=True,
-                                          help='Don\'t run the curl command.  Useful with -p'))
+                                          help='Don\'t run the curl command.  Useful with -p')),
+    REQUIRES_ARG
 ]
 
 
@@ -1149,3 +1270,12 @@ def add_generic_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
     for arg in GENERIC_OPTIONAL_ARGS:
         parser = arg.add_to_parser(parser)
     return parser
+
+
+def get_use_requires(words: Sequence[str]) -> bool:
+    arg_parser = argparse.ArgumentParser(add_help=False)
+    # need to add all the arg-parsers so compound flags ("-npR") get recognized
+    arg_parser = add_generic_args(arg_parser)
+    args, _ = arg_parser.parse_known_args(words)
+
+    return args.use_requires

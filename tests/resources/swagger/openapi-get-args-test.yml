@@ -119,6 +119,26 @@ paths:
         - name: barfoo
           in: query
     post:
-      desciption: Post Stuff
+      description: Post Stuff
     patch: {}
-    delete: {}
+    delete:
+      parameters:
+        - name: foo
+          description: Enum Test
+          in: query
+          schema:
+            type: string
+            enum:
+              - foo1
+              - foo2
+              - bar1
+              - bar2
+  /required/{path-arg}:
+    get:
+      summary: Test Required Arg
+      parameters:
+        - name: required-arg
+          in: query
+        - name: optional-arg
+          in: query
+
