@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shutil
+import sys
 import textwrap
 from abc import ABC, abstractmethod
 from collections import defaultdict, OrderedDict
@@ -15,7 +16,7 @@ from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Opt
     Callable, Any, MutableMapping, cast
 
 from jsonref import replace_refs as replace_json_refs  # type: ignore
-from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter, PathItem
+from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter, PathItem, Server
 from pydantic import BaseModel, validator
 from typing_extensions import Literal
 from urllib.parse import urlencode
@@ -202,6 +203,7 @@ class CarlParam(BaseModel):
     type_: ArgTypeModel = ArgTypeModel(type_=ArgTypeEnum.string)
     include_location: bool = False
     enums: Optional[List[ParamValue]] = None
+    default: Optional[ParamValue] = None
 
     @validator('required_', pre=True)
     def required(cls, v: Any) -> bool:
@@ -329,7 +331,7 @@ class SwaggerEndpoint:
             ):
                 pass
             else:
-                # not sure how to warn about this yet
+                # not sure how to warn about this yet, or if I should warn about it
                 # print(f"Warning: Parameter +{param_name} is in url but not explicitly declared", file=sys.stderr)
                 params[param_name].append(CarlParam(
                     name=param_name,
@@ -454,6 +456,7 @@ class GenericArgs(NamedTuple):
     values_list_params: bool = False
     values_ls_for_param: Optional[str] = None
     values_rm_args: Optional[ValuesRmArgs] = None
+    rebuild_cache: bool = False
 
 
 class CompletionItem(NamedTuple):
@@ -464,9 +467,14 @@ class CompletionItem(NamedTuple):
 UTILS_COMPLETION_ITEM = CompletionItem('utils', 'Utilities')
 
 
+class CarlServer(NamedTuple):
+    url: str
+    params: List[CarlParam]
+
+
 class SwaggerRepo:
 
-    def __init__(self, files: Optional[List[str]] = None, ephemeral: bool = False):
+    def __init__(self, files: Optional[List[str]] = None, ephemeral: bool = False, warnings: bool = True):
         if not ephemeral:
             self.root_cache = RootCache('root')
             self.methods_cache = MethodsCache('methods')
@@ -481,32 +489,37 @@ class SwaggerRepo:
             self.endpoint_cache = cast(EndpointCache, {})
             self.arg_value_cache = cast(ArgCache, {})
 
-        os.makedirs(OPEN_API_DIR, exist_ok=True)
         if files is None:
-            swagger_files = [os.path.join(OPEN_API_DIR, f) for f in os.listdir(OPEN_API_DIR)]
+            os.makedirs(OPEN_API_DIR, exist_ok=True)
+            swagger_files = list(get_files_in_dir(OPEN_API_DIR))
         else:
             swagger_files = files
 
-        if len(swagger_files) == 0:
-            # There is no swagger data, but there are some "utils" commands where this is OK
+        root_cache_item = self.root_cache.get(None, None)
+
+        if len(swagger_files) == 0 and root_cache_item:
+            # make sure the cached data is clear
+            if len(root_cache_item.urls) > 0:
+                self.clear_all_spec_caches()
+        elif len(swagger_files) == 0:
+            # nothing to clear
             pass
         else:
-            root_cache_item = self.root_cache.get(None, None)
             if root_cache_item:
                 cache_time = root_cache_item.time
             else:
                 cache_time = 0
             yaml_files_time = max(os.path.getmtime(f) for f in swagger_files)
             if yaml_files_time > cache_time:
-                self.clear_all_caches()
-                self._load_swagger_data(swagger_files=swagger_files)
+                self.clear_all_spec_caches()
+                self.load_swagger_data(swagger_files=swagger_files, warnings=warnings)
 
-    def clear_all_caches(self) -> None:
+    def clear_all_spec_caches(self) -> None:
         self.root_cache.clear()
         self.methods_cache.clear()
         self.endpoint_cache.clear()
 
-    def _load_swagger_data(self, swagger_files: Optional[Iterable[str]]):
+    def load_swagger_data(self, swagger_files: Optional[Iterable[str]], warnings: bool = False):
         cache_time = datetime.now().timestamp()
         multi_swagger_data: List[OpenAPI] = []
         if swagger_files is not None:
@@ -514,10 +527,19 @@ class SwaggerRepo:
                 with open(file, 'r') as fh:
                     loaded = yaml.safe_load(fh)
                     if loaded is not None:
-                        loaded = replace_json_refs(loaded, merge_props=True)
-                        multi_swagger_data.append(OpenAPI.parse_obj(loaded))
+                        try:
+                            loaded = replace_json_refs(loaded, merge_props=True)
+                            multi_swagger_data.append(OpenAPI.parse_obj(loaded))
+                        except Exception as e:
+                            if warnings:
+                                print(f"Error in file {file!r}: {str(e)}", file=sys.stderr)
+                            else:
+                                # fail silently
+                                pass
+                    elif warnings:
+                        print(f"Yaml error in file {file!r}", file=sys.stderr)
                     else:
-                        # At certain times we should fail more loudly here
+                        # fail silently
                         pass
 
         urls_to_cache: MutableMapping[str, UrlToCache] = OrderedDict()
@@ -525,15 +547,17 @@ class SwaggerRepo:
         for swagger_data_ in multi_swagger_data:
             root_description = swagger_data_.info.description
             root_summary = swagger_data_.info.summary or swagger_data_.info.title
+
+            carl_servers = list(self.to_carl_servers(swagger_data_.servers))
             if swagger_data_.paths:
-                server_urls = [s.url for s in swagger_data_.servers]
                 for path_str, path_spec in swagger_data_.paths.items():
                     # Note: this doesn't deal with relative servers, we might need to deal with that
                     # when fetching the spec
+                    carl_servers_for_path: List[CarlServer]
                     if path_spec.servers:
-                        server_urls_for_path = [s.url for s in swagger_data_.servers]
+                        servers_for_path = list(self.to_carl_servers(path_spec.servers))
                     else:
-                        server_urls_for_path = server_urls
+                        servers_for_path = carl_servers
 
                     path_description = path_spec.description or root_description
                     path_summary = path_spec.summary or root_summary
@@ -541,7 +565,7 @@ class SwaggerRepo:
                     for method in Method.__members__.values():
                         operation = self._get_operation(path_spec, method)
                         if operation:
-                            parameters: List[CarlParam] = []
+                            op_params: List[CarlParam] = []
                             for parameter in operation.parameters or []:
                                 if isinstance(parameter, Parameter):
                                     param_type = self.schema_to_arg_type(parameter.param_schema)
@@ -550,7 +574,7 @@ class SwaggerRepo:
                                         enums = parameter.param_schema.enum
                                     else:
                                         enums = None
-                                    parameters.append(CarlParam(
+                                    op_params.append(CarlParam(
                                         name=parameter.name,
                                         param_type=ParamType(parameter.param_in),
                                         description=parameter.description,
@@ -563,12 +587,13 @@ class SwaggerRepo:
                                     pass
                             if isinstance(operation.requestBody, RequestBody):
                                 params_from_body = self._get_params_from_body(operation.requestBody)
-                                parameters.extend(params_from_body)
+                                op_params.extend(params_from_body)
 
                             op_description = operation.description or path_description
                             op_summary = operation.summary or path_summary
-                            for server_url in server_urls_for_path:
-                                endpoint_url = server_url + path_str
+                            for server in servers_for_path:
+                                endpoint_url = server.url + path_str
+                                parameters = server.params + op_params
                                 self.endpoint_cache[endpoint_url, method] = EndpointToCache(
                                     endpoint_url=endpoint_url,
                                     method=method,
@@ -591,6 +616,33 @@ class SwaggerRepo:
             time=cache_time,
             urls=list(urls_to_cache.values())
         )
+
+    @staticmethod
+    def to_carl_servers(servers: List[Server]) -> Iterable[CarlServer]:
+        for server in servers:
+            server_params: List[CarlParam] = []
+            defaulted_url: Optional[str] = None
+            if server.variables is not None:
+                defaults: Dict[str, str] = {}
+                for variable_name, variable_spec in server.variables.items():
+                    # this casting shouldn't be necessary, but mypy isn't happy it without it
+                    variable_enums = cast(Optional[List[ParamValue]], variable_spec.enum)
+                    server_params.append(CarlParam(
+                        name=variable_name,
+                        param_type=ParamType.path,
+                        description=variable_spec.description,
+                        enums=variable_enums,
+                        required_=False,
+                        default=variable_spec.default
+                    ))
+                    defaults[variable_name] = variable_spec.default
+                try:
+                    defaulted_url = server.url.format(**defaults)
+                except KeyError:
+                    pass
+            if defaulted_url is not None:
+                yield CarlServer(defaulted_url, [])
+            yield CarlServer(server.url, server_params)
 
     @staticmethod
     def _get_operation(path_spec: PathItem, method: Method) -> Optional[Operation]:
@@ -679,7 +731,12 @@ class SwaggerRepo:
         # url is always the first arg
         url: Optional[str] = cli_args[0] if len(cli_args) >= 1 else None
 
-        possible_urls = self.root_cache[None].urls
+        root_cache_item = self.root_cache.get(None, None)
+        possible_urls: List[UrlToCache]
+        if root_cache_item:
+            possible_urls = root_cache_item.urls
+        else:
+            possible_urls = []
         valid_url_chosen: Optional[UrlToCache]
         if url is None:
             valid_url_chosen = None
@@ -730,7 +787,8 @@ class SwaggerRepo:
                         and parsed_args.cached_values_type == VALUES_PARAMS_COMPLETION.tag
                     ),
                     values_ls_for_param=values_ls_for_param,
-                    values_rm_args=values_rm_args
+                    values_rm_args=values_rm_args,
+                    rebuild_cache=(parsed_args.util_type == REBUILD_CACHE_COMPLETION.tag)
                 )
             else:
                 raise AssertionError('Should not make it here')
@@ -1035,6 +1093,12 @@ def get_completions_from_param_values(param_values: Iterable[ParamValue], prefix
             )
 
 
+def get_files_in_dir(dir_name: str) -> Iterable[str]:
+    for sub_dir_name, _, file_names in os.walk(dir_name):
+        for file_name in file_names:
+            yield os.path.join(sub_dir_name, file_name)
+
+
 def get_command_description() -> str:
     unformatted_text = \
         f"A Utility to cleanly take command-line arguments, for an endpoint you have the OpenAPI specification for," \
@@ -1072,6 +1136,7 @@ def get_command_epilogue() -> str:
 
 ZSH_COMPLETION_ITEM = CompletionItem('zsh-completion', 'Return completions for zsh')
 ZSH_PRINT_SCRIPT_COMPLETION = CompletionItem('zsh-print-script', 'Print the zsh script that enables completions')
+REBUILD_CACHE_COMPLETION = CompletionItem('rebuild-spec-cache', 'Clear and rebuild the cache of the OpenAPI spec data')
 VALUES_COMPLETION = CompletionItem('cached-values', 'Utilities to help with cached values for completions')
 VALUES_PARAMS_COMPLETION = CompletionItem('params', 'List all the param names that have values cached')
 VALUES_LS_COMPLETION = CompletionItem('ls', 'List all the values cached for a particular param')
@@ -1079,6 +1144,7 @@ VALUES_RM_COMPLETION = CompletionItem('rm', 'Remove a value for an param from th
 UTIL_TYPE_COMPLETIONS = [
     ZSH_COMPLETION_ITEM,
     ZSH_PRINT_SCRIPT_COMPLETION,
+    REBUILD_CACHE_COMPLETION,
     VALUES_COMPLETION
 ]
 
@@ -1123,6 +1189,8 @@ def add_utils_parser(parser: Any) -> Any:
                                                     description=VALUES_RM_COMPLETION.description)
     values_rm_parser.add_argument('param_name', help='Name of parameter to get cached values for')
     values_rm_parser.add_argument('value', help='Cached value to remove')
+
+    util_type_subparsers.add_parser(REBUILD_CACHE_COMPLETION.tag, description=REBUILD_CACHE_COMPLETION.description)
 
     return parser
 
@@ -1273,6 +1341,10 @@ def add_generic_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser
 
 
 def get_use_requires(words: Sequence[str]) -> bool:
+    """
+    See's if we have the --no-requires flag set.  Needed before building other args because it's used to determine
+    if the args are required
+    """
     arg_parser = argparse.ArgumentParser(add_help=False)
     # need to add all the arg-parsers so compound flags ("-npR") get recognized
     arg_parser = add_generic_args(arg_parser)

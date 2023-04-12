@@ -2,7 +2,7 @@
 import sys
 import shlex
 import subprocess
-from typing import List
+from typing import List, Optional
 
 from curl_arguments_url.curl_arguments_url import SwaggerRepo
 
@@ -56,12 +56,15 @@ def line_to_words(line: str) -> List[str]:
     raise Exception("Shouldn't get here, but this exception keeps mypy happy")
 
 
-def main():
+def main(passed_argv: Optional[List[str]] = None) -> int:
     """Console script for curl_arguments_url."""
-
+    if passed_argv is None:
+        argv = sys.argv
+    else:
+        argv = passed_argv
     swagger = SwaggerRepo()
 
-    cmd, generic_args = swagger.cli_args_to_cmd(sys.argv[1:])
+    cmd, generic_args = swagger.cli_args_to_cmd(argv[1:])
 
     if not generic_args.util:
         if generic_args.print_cmd:
@@ -100,8 +103,13 @@ def main():
             value = generic_args.values_rm_args.value
             swagger.remove_cached_value_for_param(param_name, value)
             print(f"Value {value!r} removed for param +{param_name}")
+        elif generic_args.rebuild_cache:
+            swagger.clear_all_spec_caches()
+            SwaggerRepo(warnings=True)  # rebuilds the caches
         else:
             raise NotImplementedError()
+
+        return 0
 
 
 if __name__ == '__main__':

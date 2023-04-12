@@ -1,4 +1,4 @@
-.PHONY: clean clean-test clean-pyc clean-build docs help flake8 mypy
+.PHONY: clean clean-test clean-pyc clean-build help flake8 mypy check
 .DEFAULT_GOAL := help
 
 define BROWSER_PYSCRIPT
@@ -63,12 +63,6 @@ test: ## run tests quickly with the default Python
 test-all: ## run tests on every Python version with tox
 	tox
 
-coverage: ## check code coverage quickly with the default Python
-	coverage run --source curl_arguments_url -m pytest
-	coverage report -m
-	coverage html
-	$(BROWSER) htmlcov/index.html
-
 release: dist ## package and upload a release
 	twine upload dist/*
 
@@ -83,3 +77,5 @@ install: clean ## install the package to the active Python's site-packages
 develop: clean
 	pip install -e .
 	pip install -r requirements_dev.txt
+
+check: lint test

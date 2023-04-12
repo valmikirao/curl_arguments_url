@@ -8,11 +8,34 @@ import re
 import sys
 from copy import deepcopy
 from typing import List, Tuple, Optional, Iterable
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, ANY
 
 import pytest
 
 from curl_arguments_url.curl_arguments_url import SwaggerRepo, CompletionItem, GENERIC_OPTIONAL_ARGS
+
+ALL_PATHS = [
+    '/completer',
+    '/dashed/arg/name',
+    '/get',
+    '/has/multiple/methods',
+    '/need/a/header/{for}/this',
+    '/posting/raw/stuff',
+    '/posting/stuff',
+    '/required/{path-arg}',
+    '/{arg}/in/path/and/body',
+    '/{bad-thing}/do',
+    '/{thing}/do'
+]
+
+ALL_SERVERS = [
+    'fake.com',
+    'http://fake.com',
+    'http://{foo}.com',
+    'http://fake1.com'
+]
+
+ALL_URLS = sorted(serv + path for serv, path in itertools.product(ALL_SERVERS, ALL_PATHS))
 
 
 @pytest.mark.parametrize('args,expected_cmd', [
@@ -57,8 +80,12 @@ from curl_arguments_url.curl_arguments_url import SwaggerRepo, CompletionItem, G
          '-H', 'Content-Type: application/json',
          '--data-binary', '{"arg": "body_value"}'
     ]),
-    ('fake.com/required/{path-arg} GET -nR +optional-arg value'.split(),
-     'curl -X GET fake.com/required/?optional-arg=value'.split())
+    ('fake.com/required/{path-arg} GET -nR +optional-arg value'.split(' '),
+     'curl -X GET fake.com/required/?optional-arg=value'.split(' ')),
+    ('http://fake1.com/get POST +foo thang'.split(' '),
+     'curl -X POST http://fake1.com/get?foo=thang'.split(' ')),
+    ('http://{foo}.com/get POST +foo:QUERY bar +foo:PATH fake2'.split(' '),
+     'curl -X POST http://fake2.com/get?foo=bar'.split(' '))
 ])
 def test_cli_args_to_cmd(swagger_model: SwaggerRepo, args: List[str], expected_cmd: List[str]):
     cmd, _ = swagger_model.cli_args_to_cmd(args)
@@ -79,28 +106,6 @@ def test_cli_args_to_cmd_missing_required(swagger_model: SwaggerRepo, monkeypatc
     except MockArgParseError:
         # errored as expected
         pass
-
-
-ALL_PATHS = [
-    '/completer',
-    '/dashed/arg/name',
-    '/get',
-    '/has/multiple/methods',
-    '/need/a/header/{for}/this',
-    '/posting/raw/stuff',
-    '/posting/stuff',
-    '/required/{path-arg}',
-    '/{arg}/in/path/and/body',
-    '/{bad-thing}/do',
-    '/{thing}/do'
-]
-
-ALL_SERVERS = [
-    'fake.com',
-    'http://fake.com'
-]
-
-ALL_URLS = [serv + path for serv, path in itertools.product(ALL_SERVERS, ALL_PATHS)]
 
 
 GENERIC_OPTIONAL_NAME_OR_FLAGS = list(itertools.chain(*(a.name_or_flags for a in GENERIC_OPTIONAL_ARGS)))
@@ -144,7 +149,7 @@ POSTING_URL_COMPLETIONS = [
     CompletionItem(tag='fake.com/posting/raw/stuff', description='Testing Spec'),
     CompletionItem(tag='fake.com/posting/stuff', description='Testing Spec')
 ]
-ALL_URL_COMPLETIONS = [
+ALL_FAKE_COM_URL_COMPLETIONS = [
     CompletionItem(tag='fake.com/completer', description='For Completion Tests'),
     CompletionItem(tag='fake.com/dashed/arg/name', description='Testing Spec'),
     CompletionItem(tag='fake.com/get', description='Testing Spec'),
@@ -204,7 +209,7 @@ TestGetCompletionsCase = Tuple[int, List[str], List[CompletionItem]]
 
 class TestGetCompletionsParametrize:
     UPPER_AND_LOWER_CASES = [
-        (1, ['carl', 'fake.com'], ALL_URL_COMPLETIONS),
+        (1, ['carl', 'fake.com'], ALL_FAKE_COM_URL_COMPLETIONS),
         (1, ['carl', 'u'], [CompletionItem('utils', 'Utilities')]),
         (1, ['carl', 'fake.com/posting/'], POSTING_URL_COMPLETIONS),
         (2, ['carl', 'fake.com/completer', ''], ALL_METHOD_COMPLETIONS),
@@ -242,6 +247,9 @@ class TestGetCompletionsParametrize:
         ]),
         (4, ['carl', 'fake.com/completer', 'DELETE', '+foo', 'ba'], [
             CompletionItem(tag=t, description=None) for t in ('bar1', 'bar2')
+        ]),
+        (1, ['carl', 'http:'], [
+            CompletionItem(tag=t, description=ANY) for t in ALL_URLS if t.startswith('http://')
         ])
     ]
     SIMPLE_CASES = [

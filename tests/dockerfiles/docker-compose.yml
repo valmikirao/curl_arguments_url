@@ -13,5 +13,6 @@ services:
       context: ../..
     volumes:
       - ../..:/app
+      - ../../tests/resources/swagger:/root/.carl/open_api
 
 

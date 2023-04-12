@@ -5,6 +5,13 @@ info:
 servers:
   - url: fake.com
   - url: http://fake.com
+  - url: http://{foo}.com
+    variables:
+      foo:
+        enum:
+          - fake1
+          - fake2
+        default: fake1
 paths:
   /get:
     post:
