@@ -13,7 +13,17 @@ def content_root():
 
 @pytest.fixture()
 def swagger_model(content_root):
-    openapi_file = os.path.join(content_root, 'tests', 'resources', 'swagger', 'openapi-get-args-test.yml')
+    openapi_file = os.path.join(content_root, 'tests', 'resources', 'open_api', 'openapi-test.yml')
+    return SwaggerRepo(files=[openapi_file], ephemeral=True)
+
+
+@pytest.fixture()
+def swagger_model_2(content_root):
+    """
+    It was getting cumbersome to update the original test file since it often
+    effected many existing tests, so started a new one
+    """
+    openapi_file = os.path.join(content_root, 'tests', 'resources', 'open_api', 'openapi-test-2.yml')
     return SwaggerRepo(files=[openapi_file], ephemeral=True)
 
 

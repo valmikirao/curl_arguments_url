@@ -20,8 +20,8 @@ from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Ref
 from pydantic import BaseModel, validator
 from typing_extensions import Literal
 from urllib.parse import urlencode
-
 import yaml
+import yaml.parser
 
 REMAINING_ARG = 'passed_to_curl'
 
@@ -525,19 +525,25 @@ class SwaggerRepo:
         if swagger_files is not None:
             for file in swagger_files:
                 with open(file, 'r') as fh:
-                    loaded = yaml.safe_load(fh)
+                    loaded: Optional[Dict[str, Any]]
+                    try:
+                        loaded = yaml.safe_load(fh)
+                    except yaml.parser.ParserError as e:
+                        if warnings:
+                            print('WARNING: ' + str(e), file=sys.stderr)
+                        loaded = None
                     if loaded is not None:
                         try:
                             loaded = replace_json_refs(loaded, merge_props=True)
                             multi_swagger_data.append(OpenAPI.parse_obj(loaded))
                         except Exception as e:
                             if warnings:
-                                print(f"Error in file {file!r}: {str(e)}", file=sys.stderr)
+                                print(f"WARNING: Error in file {file!r}: {str(e)}", file=sys.stderr)
                             else:
                                 # fail silently
                                 pass
                     elif warnings:
-                        print(f"Yaml error in file {file!r}", file=sys.stderr)
+                        print(f"WARNING: Yaml error in file {file!r}", file=sys.stderr)
                     else:
                         # fail silently
                         pass
@@ -565,6 +571,10 @@ class SwaggerRepo:
                     for method in Method.__members__.values():
                         operation = self._get_operation(path_spec, method)
                         if operation:
+                            if operation.servers:
+                                servers_for_op = list(self.to_carl_servers(operation.servers))
+                            else:
+                                servers_for_op = servers_for_path
                             op_params: List[CarlParam] = []
                             for parameter in operation.parameters or []:
                                 if isinstance(parameter, Parameter):
@@ -591,7 +601,7 @@ class SwaggerRepo:
 
                             op_description = operation.description or path_description
                             op_summary = operation.summary or path_summary
-                            for server in servers_for_path:
+                            for server in servers_for_op:
                                 endpoint_url = server.url + path_str
                                 parameters = server.params + op_params
                                 self.endpoint_cache[endpoint_url, method] = EndpointToCache(

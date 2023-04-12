@@ -1,18 +1,32 @@
 version: "3.9"
 services:
   webapp:
-    hostname: fake.com
     build:
       dockerfile: Dockerfile.flask
       context: .
     volumes:
       - ./flask_src:/app
+    networks:
+      default:
+        aliases:
+          - fake.com
+          - demo.io
+          - server-root.com
+          - server-path.com
+          - server-op.com
+          - something-else-root.com
+          - something-else-path.com
+          - something-else-op.com
   carl-zsh:
     build:
       dockerfile: tests/dockerfiles/Dockerfile.zsh
       context: ../..
     volumes:
       - ../..:/app
-      - ../../tests/resources/swagger:/root/.carl/open_api
+      # uncomment this to have test and demo apis automagically used
+      # - ../../tests/resources/open_api:/root/.carl/open_api
+
+networks:
+  default:
 
 

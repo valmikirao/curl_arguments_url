@@ -4,9 +4,9 @@
 import os.path
 
 from setuptools import setup, find_packages
+from curl_arguments_url import __version__ as version
 
 m2r_installed = False
-version = '0.1.0'
 
 try:
     import m2r  # type: ignore

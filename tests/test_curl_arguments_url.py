@@ -7,7 +7,7 @@ import itertools
 import re
 import sys
 from copy import deepcopy
-from typing import List, Tuple, Optional, Iterable
+from typing import List, Tuple, Optional, Iterable, NamedTuple, Any
 from unittest.mock import MagicMock, ANY
 
 import pytest
@@ -207,8 +207,32 @@ ALL_GENERIC_COMPLETIONS = [
 TestGetCompletionsCase = Tuple[int, List[str], List[CompletionItem]]
 
 
-class TestGetCompletionsParametrize:
-    UPPER_AND_LOWER_CASES = [
+TestGetCompletionsParam = Tuple[int, List[str], List[CompletionItem]]
+
+
+class TestGetCompletionsParametrize(NamedTuple):
+    upper_and_lower_cases: List[TestGetCompletionsParam] = []
+    simple_cases: List[TestGetCompletionsParam] = []
+
+    def get_cases(self) -> Iterable[TestGetCompletionsCase]:
+        for case in self.upper_and_lower_cases:
+            # test with both uppoer and lower
+            case_upper = deepcopy(case)
+            case_upper[1][-1] = case[1][-1].upper()
+            yield case_upper
+
+            case_lower = deepcopy(case)
+            case_lower[1][-1] = case[1][-1].lower()
+            yield case_lower
+        for case in self.simple_cases:
+            yield case
+
+    def parametrize(self) -> Any:
+        return pytest.mark.parametrize('index,words,expected', self.get_cases())
+
+
+test_get_completions_parametrize = TestGetCompletionsParametrize(
+    upper_and_lower_cases=[
         (1, ['carl', 'fake.com'], ALL_FAKE_COM_URL_COMPLETIONS),
         (1, ['carl', 'u'], [CompletionItem('utils', 'Utilities')]),
         (1, ['carl', 'fake.com/posting/'], POSTING_URL_COMPLETIONS),
@@ -251,34 +275,43 @@ class TestGetCompletionsParametrize:
         (1, ['carl', 'http:'], [
             CompletionItem(tag=t, description=ANY) for t in ALL_URLS if t.startswith('http://')
         ])
-    ]
-    SIMPLE_CASES = [
+    ],
+    simple_cases=[
         (4, ['carl', 'fake.com/completer', 'POST', '+foo', 'not-in-cache'], [
             CompletionItem(tag='not-in-cache', description=None)
         ]),
     ]
-
-    @classmethod
-    def get_cases(cls) -> Iterable[TestGetCompletionsCase]:
-        for case in cls.UPPER_AND_LOWER_CASES:
-            # test with both uppoer and lower
-            case_upper = deepcopy(case)
-            case_upper[1][-1] = case[1][-1].upper()
-            yield case_upper
-
-            case_lower = deepcopy(case)
-            case_lower[1][-1] = case[1][-1].lower()
-            yield case_lower
-        for case in cls.SIMPLE_CASES:
-            yield case
+)
 
 
 @pytest.mark.usefixtures('cache_param_values')
-@pytest.mark.parametrize('index,words,expected', TestGetCompletionsParametrize.get_cases())
+@test_get_completions_parametrize.parametrize()
 def test_get_completions(swagger_model: SwaggerRepo, index: int, words: List[str],
                          expected: List[Tuple[str, Optional[str]]]):
 
     actual = swagger_model.get_completions(index, words)
+    assert list(actual) == expected
+
+
+test_get_completions_2_parametrize = TestGetCompletionsParametrize(
+    upper_and_lower_cases=[
+        (1, ['carl', 'server-'], [
+            CompletionItem(tag='server-op.com/path-servers', description='Testing Spec'),
+            CompletionItem(tag='server-path.com/path-servers', description='Testing Spec'),
+            CompletionItem(tag='server-root.com/no-servers', description='Testing Spec'),
+        ]),
+        (2, ['carl', 'server-path.com/path-servers', ''], [
+            CompletionItem('GET', description='Testing Spec')
+        ])
+    ]
+)
+
+
+@test_get_completions_2_parametrize.parametrize()
+def test_get_completions_2(swagger_model_2: SwaggerRepo, index: int, words: List[str],
+                           expected: List[Tuple[str, Optional[str]]]):
+
+    actual = swagger_model_2.get_completions(index, words)
     assert list(actual) == expected
 
 

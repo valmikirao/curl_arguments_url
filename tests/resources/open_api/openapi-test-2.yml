@@ -1,0 +1,25 @@
+openapi: 3.0.0
+info:
+    title: Testing Spec
+    version: 0.0.1
+servers:
+  - url: "{pre}-root.com"
+    variables: &server-variables
+      pre:
+        enum:
+          - server
+          - something-else
+        default: server
+
+paths:
+  /no-servers:
+    get: {}
+  /path-servers:
+    servers:
+      - url: "{pre}-path.com"
+        variables: *server-variables
+    get: {}
+    post:
+      servers:
+        - url: "{pre}-op.com"
+          variables: *server-variables

@@ -148,4 +148,5 @@ paths:
           in: query
         - name: optional-arg
           in: query
+          required: true
 

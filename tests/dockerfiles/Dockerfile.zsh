@@ -7,7 +7,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y zsh curl jq git && \
     sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
 
-COPY setup.py /app
+COPY setup.py ./
+COPY curl_arguments_url/__init__.py ./curl_arguments_url/
 
 RUN pip --no-cache install -e .
 
@@ -15,7 +16,6 @@ COPY . /app
 
 RUN echo 'eval "$(carl utils zsh-print-script)"' >> "$HOME/.zshrc" && \
     echo "export PS1='%% '" >> "$HOME/.zshrc" && \
-    mkdir -p "$HOME/.carl/open_api" && \
-    cp tests/resources/swagger/openapi-get-args-test.yml "$HOME/.carl/open_api"
+    mkdir -p "$HOME/.carl/open_api"
 
 CMD ["zsh"]
