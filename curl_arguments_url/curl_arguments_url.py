@@ -885,7 +885,11 @@ class SwaggerRepo:
             prefix: str = words_[1] or ''
             if UTILS_COMPLETION_ITEM.tag.lower().startswith(prefix.lower()):
                 items_to_return.append(UTILS_COMPLETION_ITEM)
-            possible_urls = self.root_cache[None].urls
+            root_cache = self.root_cache.get(None, None)
+            if root_cache:
+                possible_urls = root_cache.urls
+            else:
+                possible_urls = []
             for possible_url in possible_urls:
                 if possible_url.url.lower().startswith(prefix.lower()):
                     description = possible_url.summary or possible_url.description

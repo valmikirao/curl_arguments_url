@@ -1,0 +1,58 @@
+openapi: 3.0.0
+info:
+    title: Demo Spec
+    version: 0.0.1
+servers:
+  - url: http://demo.io/v0
+paths:
+  /entities/{path-item}:
+    summary: Demo Entity Endpoint
+    get:
+      summary: Demo Get Command
+      parameters:
+        - name: path-item
+          description: Demo Path Param
+          in: path
+          schema:
+            type: string
+        - name: query-item
+          description: Demo Query Param
+          in: query
+          schema:
+            type: string
+    post:
+      summary: Demo Post Command
+      requestBody:
+        content:
+          application/json:
+            media_type_schema:
+              type: object
+              properties:
+                field-one:
+                  type: string
+                field-two:
+                  type: array
+                  items:
+                    type: string
+                field-three:
+                  type: object
+                  properties:
+                    complex:
+                      # honestly, carl doesn't check below this level
+                      type: array
+                      items:
+                        type: string
+    delete:
+      summary: Demo Delete Command
+  /restricted:
+    summary: A Restricted Endpoint
+    get:
+      summary: More GET Endpoints
+  /other:
+    summary: Another Endpoint
+    get:
+      summary: More GET Endpoints
+  /endpoints:
+    summary: Yet Another Endpoint
+    get:
+      summary: More GET Endpoints

@@ -366,3 +366,18 @@ def test_remove_complex_value(swagger_model: SwaggerRepo):
     ]
     actual_remaining_values = swagger_model.get_completions_for_values_for_param('arg_nested', prefix='')
     assert [v.tag for v in actual_remaining_values] == remaining_values
+
+
+def test_empty(monkeypatch):
+    """ Don't error if there are no files """
+    swagger_model = SwaggerRepo(files=[], ephemeral=True)
+    try:
+        with monkeypatch.context() as monkypatch_:
+            monkypatch_.setattr(sys, 'stdout', MagicMock())  # don't want the help output here
+            swagger_model.cli_args_to_cmd(['--help'])
+    except SystemExit as x:
+        assert x.code == 0
+
+    assert list(swagger_model.get_completions(1, ['carl', ''])) == [
+        CompletionItem('utils', description='Utilities')
+    ]
