@@ -6,21 +6,12 @@ import os.path
 from setuptools import setup, find_packages
 from curl_arguments_url import __version__ as version
 
-m2r_installed = False
-
-try:
-    import m2r  # type: ignore
-    m2r_installed = True
-except ModuleNotFoundError:
-    pass
-
 
 def _read_file(file: str) -> str:
     # we only needs these files if we're publishing
-    if m2r_installed and os.path.exists(file):
+    if os.path.exists(file):
         with open(file) as f:
-            raw_file = f.read()
-        return m2r.convert(raw_file)
+            return f.read()
     else:
         return 'N/A'
 
@@ -57,8 +48,9 @@ setup(
     install_requires=requirements,
     license="Apache Software License 2.0",
     long_description=readme,
+    long_description_content_type='text/markdown',
     include_package_data=True,
-    keywords='curl_arguments_url,carl',
+    keywords='curl_arguments_url,carl,curl,zsh,completions,swagger,openapi',
     name='curl_arguments_url',
     packages=find_packages(include=['curl_arguments_url', 'curl_arguments_url.*']),
     url='https://github.com/valmikirao/curl_arguments_url',

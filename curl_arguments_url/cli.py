@@ -106,6 +106,11 @@ def main(passed_argv: Optional[List[str]] = None) -> int:
         elif generic_args.rebuild_cache:
             swagger.clear_all_spec_caches()
             SwaggerRepo(warnings=True)  # rebuilds the caches
+        elif generic_args.values_add_args is not None:
+            swagger.add_values(
+                param_name=generic_args.values_add_args.param_name,
+                values=generic_args.values_add_args.values
+            )
         else:
             raise NotImplementedError()
 

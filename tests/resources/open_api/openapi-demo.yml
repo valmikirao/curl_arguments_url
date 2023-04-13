@@ -29,12 +29,15 @@ paths:
               type: object
               properties:
                 field-one:
+                  description: Demo Body String Field
                   type: string
                 field-two:
+                  description: Demo Body Array Field
                   type: array
                   items:
                     type: string
                 field-three:
+                  description: Demo Body Complex Field
                   type: object
                   properties:
                     complex:

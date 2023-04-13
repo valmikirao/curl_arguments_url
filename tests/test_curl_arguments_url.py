@@ -229,7 +229,7 @@ TestGetCompletionsCase = Tuple[int, List[str], List[CompletionItem]]
 TestGetCompletionsParam = Tuple[int, List[str], List[CompletionItem]]
 
 
-class TestGetCompletionsParametrize(NamedTuple):
+class GetCompletionsParametrize(NamedTuple):
     upper_and_lower_cases: List[TestGetCompletionsParam] = []
     simple_cases: List[TestGetCompletionsParam] = []
 
@@ -250,7 +250,7 @@ class TestGetCompletionsParametrize(NamedTuple):
         return pytest.mark.parametrize('index,words,expected', self.get_cases())
 
 
-test_get_completions_parametrize = TestGetCompletionsParametrize(
+get_completions_parametrize = GetCompletionsParametrize(
     upper_and_lower_cases=[
         (1, ['carl', 'fake.com'], ALL_FAKE_COM_URL_COMPLETIONS),
         (1, ['carl', 'u'], [CompletionItem('utils', 'Utilities')]),
@@ -274,6 +274,7 @@ test_get_completions_parametrize = TestGetCompletionsParametrize(
         (3, ['carl', 'fake.com/completer', 'POST', '-'], ALL_GENERIC_COMPLETIONS),
         (5, ['carl', 'fake.com/completer', 'POST', '+foo', 'some-val', '-'], ALL_GENERIC_COMPLETIONS),
         (3, ['carl', 'utils', 'cached-values', ''], [
+            CompletionItem(tag='add', description='Add one or more values for a param to the cache'),
             CompletionItem(tag='ls', description='List all the values cached for a particular param'),
             CompletionItem(tag='params', description='List all the param names that have values cached'),
             CompletionItem(tag='rm', description='Remove a value for an param from the cache for completions')
@@ -304,7 +305,7 @@ test_get_completions_parametrize = TestGetCompletionsParametrize(
 
 
 @pytest.mark.usefixtures('cache_param_values')
-@test_get_completions_parametrize.parametrize()
+@get_completions_parametrize.parametrize()
 def test_get_completions(swagger_model: SwaggerRepo, index: int, words: List[str],
                          expected: List[Tuple[str, Optional[str]]]):
 
@@ -312,7 +313,7 @@ def test_get_completions(swagger_model: SwaggerRepo, index: int, words: List[str
     assert list(actual) == expected
 
 
-test_get_completions_2_parametrize = TestGetCompletionsParametrize(
+get_completions_2_parametrize = GetCompletionsParametrize(
     upper_and_lower_cases=[
         (1, ['carl', 'server-'], [
             CompletionItem(tag='server-op.com/path-servers', description='Testing Spec'),
@@ -326,7 +327,7 @@ test_get_completions_2_parametrize = TestGetCompletionsParametrize(
 )
 
 
-@test_get_completions_2_parametrize.parametrize()
+@get_completions_2_parametrize.parametrize()
 def test_get_completions_2(swagger_model_2: SwaggerRepo, index: int, words: List[str],
                            expected: List[Tuple[str, Optional[str]]]):
 
@@ -366,8 +367,8 @@ def test_remove_param_cached_value(swagger_model: SwaggerRepo, remove_values: Li
     assert [v.tag for v in actual_remaining_params] == remaining_values
 
 
-@pytest.mark.usefixtures('cache_param_values')
-def test_remove_complex_value(swagger_model: SwaggerRepo):
+@pytest.fixture()
+def initial_arg_nested_cached_values(swagger_model: SwaggerRepo) -> List[str]:
     initial_values = [
         '{"A": 1, "B": "barfoo-B-nested"}',
         '{"A": 1, "B": "foobar-B-nested"}',
@@ -377,9 +378,32 @@ def test_remove_complex_value(swagger_model: SwaggerRepo):
     actual_initial_values = swagger_model.get_completions_for_values_for_param('arg_nested', prefix='')
     assert [v.tag for v in actual_initial_values] == initial_values
 
+    return initial_values
+
+
+@pytest.mark.usefixtures('cache_param_values', 'initial_arg_nested_cached_values')
+def test_remove_complex_value(swagger_model: SwaggerRepo):
     swagger_model.remove_cached_value_for_param('arg_nested', '{"A": 1, "B": "foobar-B-nested"}')
     remaining_values = [
         '{"A": 1, "B": "barfoo-B-nested"}',
+        '{"A": 1, "B": "bar-B-nested"}',
+        '{"A": 1, "B": "foo-B-nested"}'
+    ]
+    actual_remaining_values = swagger_model.get_completions_for_values_for_param('arg_nested', prefix='')
+    assert [v.tag for v in actual_remaining_values] == remaining_values
+
+
+@pytest.mark.usefixtures('cache_param_values', 'initial_arg_nested_cached_values')
+def test_add_complex_value(swagger_model: SwaggerRepo):
+    swagger_model.add_values('arg_nested', values=[
+        '{"cache": "this"}',
+        'something-simple'
+    ])
+    remaining_values = [
+        'something-simple',
+        '{"cache": "this"}',
+        '{"A": 1, "B": "barfoo-B-nested"}',
+        '{"A": 1, "B": "foobar-B-nested"}',
         '{"A": 1, "B": "bar-B-nested"}',
         '{"A": 1, "B": "foo-B-nested"}'
     ]
