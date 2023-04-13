@@ -9,11 +9,12 @@ import sys
 import textwrap
 from abc import ABC, abstractmethod
 from collections import defaultdict, OrderedDict
+from copy import deepcopy
 from datetime import datetime
 from enum import Enum
 from hashlib import md5
 from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, \
-    Callable, Any, MutableMapping, cast
+    Callable, Any, MutableMapping, cast, Set
 
 from jsonref import replace_refs as replace_json_refs  # type: ignore
 from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter, PathItem, Server
@@ -447,6 +448,11 @@ class ValuesRmArgs(NamedTuple):
     value: str
 
 
+class ValuesAddArgs(NamedTuple):
+    param_name: str
+    values: List[str]
+
+
 class GenericArgs(NamedTuple):
     print_cmd: bool = False
     run_cmd: bool = False
@@ -456,6 +462,7 @@ class GenericArgs(NamedTuple):
     values_list_params: bool = False
     values_ls_for_param: Optional[str] = None
     values_rm_args: Optional[ValuesRmArgs] = None
+    values_add_args: Optional[ValuesAddArgs] = None
     rebuild_cache: bool = False
 
 
@@ -788,6 +795,15 @@ class SwaggerRepo:
                     )
                 else:
                     values_rm_args = None
+                values_add_args: Optional[ValuesAddArgs]
+                if parsed_args.util_type == VALUES_COMPLETION.tag and \
+                        parsed_args.cached_values_type == VALUES_ADD_COMPLETION.tag:
+                    values_add_args = ValuesAddArgs(
+                        param_name=parsed_args.param_name,
+                        values=parsed_args.value
+                    )
+                else:
+                    values_add_args = None
                 return [], GenericArgs(
                     util=True,
                     zsh_completion_args=namespace_to_zsh_completion_args(parsed_args),
@@ -798,6 +814,7 @@ class SwaggerRepo:
                     ),
                     values_ls_for_param=values_ls_for_param,
                     values_rm_args=values_rm_args,
+                    values_add_args=values_add_args,
                     rebuild_cache=(parsed_args.util_type == REBUILD_CACHE_COMPLETION.tag)
                 )
             else:
@@ -820,7 +837,8 @@ class SwaggerRepo:
             self.cache_param_arg_pairs(param_arg_pairs)
 
             headers, param_arg_pairs = format_headers(param_arg_pairs)
-            post_data, param_arg_pairs = format_post_data(param_arg_pairs)
+            initial_post_data: Dict[str, Any] = args.body_json
+            post_data, param_arg_pairs = format_post_data(param_arg_pairs, initial_post_data)
             formatted_url = format_url(url_, param_arg_pairs)
 
             method_: str = method.value
@@ -1039,7 +1057,9 @@ class SwaggerRepo:
             yield from _from_list(words[0], UTIL_TYPE_COMPLETIONS)
         elif index == 1 and words[0] == VALUES_COMPLETION.tag:
             yield from _from_list(words[1], VALUE_TYPES_COMPLETION)
-        elif index == 2 and words[1] in (VALUES_LS_COMPLETION.tag, VALUES_RM_COMPLETION.tag):
+        elif index == 2 and words[1] in (
+                VALUES_LS_COMPLETION.tag, VALUES_RM_COMPLETION.tag, VALUES_ADD_COMPLETION.tag
+        ):
             root_item = self.root_cache[None]
             for param_name in root_item.params_with_cached_values:
                 if param_name.startswith(words[2]):
@@ -1077,6 +1097,20 @@ class SwaggerRepo:
                 p for p in root_cache_item.params_with_cached_values if p != param_name
             ]
             self.root_cache[None] = root_cache_item
+
+    def add_values(self, param_name: str, values: List[str]) -> None:
+        # it's easiest to use cache_param_arg_pairs() to be consistent
+        # with how we cache these, though we might want to refactor this to be less awkward
+        # at some point
+        arg_pairs: ArgPairs = []
+        param = CarlParam(
+            name=param_name,
+            param_type=ParamType.query  # param_type doesn't matter here
+        )
+        for value in values:
+            arg_pairs.append((param, value),)
+
+        self.cache_param_arg_pairs(arg_pairs)
 
 
 def param_value_to_str(value: ParamValue) -> str:
@@ -1155,6 +1189,7 @@ VALUES_COMPLETION = CompletionItem('cached-values', 'Utilities to help with cach
 VALUES_PARAMS_COMPLETION = CompletionItem('params', 'List all the param names that have values cached')
 VALUES_LS_COMPLETION = CompletionItem('ls', 'List all the values cached for a particular param')
 VALUES_RM_COMPLETION = CompletionItem('rm', 'Remove a value for an param from the cache for completions')
+VALUES_ADD_COMPLETION = CompletionItem('add', 'Add one or more values for a param to the cache')
 UTIL_TYPE_COMPLETIONS = [
     ZSH_COMPLETION_ITEM,
     ZSH_PRINT_SCRIPT_COMPLETION,
@@ -1165,7 +1200,8 @@ UTIL_TYPE_COMPLETIONS = [
 VALUE_TYPES_COMPLETION = [
     VALUES_PARAMS_COMPLETION,
     VALUES_LS_COMPLETION,
-    VALUES_RM_COMPLETION
+    VALUES_RM_COMPLETION,
+    VALUES_ADD_COMPLETION
 ]
 
 VALUES_SUBPARSER_DEST = 'cached_values_type'
@@ -1175,36 +1211,40 @@ def add_utils_parser(parser: Any) -> Any:
     # type annotations "Any" because argparse.subparser doesn't have
     # nice typs
     util_parser: argparse.ArgumentParser = parser.add_parser(
-        UTILS_COMPLETION_ITEM.tag, description=UTILS_COMPLETION_ITEM.description
+        UTILS_COMPLETION_ITEM.tag, help=UTILS_COMPLETION_ITEM.description
     )
     util_type_subparsers = util_parser.add_subparsers(dest='util_type', required=True)
 
     zsh_completion_parser = util_type_subparsers.add_parser(
-        ZSH_COMPLETION_ITEM.tag, description=ZSH_COMPLETION_ITEM.description
+        ZSH_COMPLETION_ITEM.tag, help=ZSH_COMPLETION_ITEM.description
     )
     zsh_completion_parser.add_argument('word_index', type=int)
     zsh_completion_parser.add_argument('line')
 
     util_type_subparsers.add_parser(ZSH_PRINT_SCRIPT_COMPLETION.tag,
-                                    description=ZSH_PRINT_SCRIPT_COMPLETION.description)
+                                    help=ZSH_PRINT_SCRIPT_COMPLETION.description)
 
     values_parser = util_type_subparsers.add_parser(
-        VALUES_COMPLETION.tag, description=VALUES_COMPLETION.description
+        VALUES_COMPLETION.tag, help=VALUES_COMPLETION.description
     )
 
     values_subparsers = values_parser.add_subparsers(dest=VALUES_SUBPARSER_DEST)
-    values_subparsers.add_parser(VALUES_PARAMS_COMPLETION.tag, description=VALUES_PARAMS_COMPLETION.description)
+    values_subparsers.add_parser(VALUES_PARAMS_COMPLETION.tag, help=VALUES_PARAMS_COMPLETION.description)
 
     values_ls_parser = values_subparsers.add_parser(VALUES_LS_COMPLETION.tag,
-                                                    description=VALUES_LS_COMPLETION.description)
+                                                    help=VALUES_LS_COMPLETION.description)
     values_ls_parser.add_argument('param_name', help='Name of parameter to get cached values for')
 
     values_rm_parser = values_subparsers.add_parser(VALUES_RM_COMPLETION.tag,
-                                                    description=VALUES_RM_COMPLETION.description)
+                                                    help=VALUES_RM_COMPLETION.description)
     values_rm_parser.add_argument('param_name', help='Name of parameter to get cached values for')
     values_rm_parser.add_argument('value', help='Cached value to remove')
 
-    util_type_subparsers.add_parser(REBUILD_CACHE_COMPLETION.tag, description=REBUILD_CACHE_COMPLETION.description)
+    values_add_parser = values_subparsers.add_parser(VALUES_ADD_COMPLETION.tag, help=VALUES_ADD_COMPLETION.description)
+    values_add_parser.add_argument('param_name', help='Name of parameter to cache value for')
+    values_add_parser.add_argument('value', nargs='+', help='One or more values to cache')
+
+    util_type_subparsers.add_parser(REBUILD_CACHE_COMPLETION.tag, help=REBUILD_CACHE_COMPLETION.description)
 
     return parser
 
@@ -1230,9 +1270,10 @@ class ArgCache(FileCache[str, List[ParamValue]]):
         return key
 
 
-def format_post_data(param_args: ArgPairs) -> Tuple[List[str], ArgPairs]:
+def format_post_data(param_args: ArgPairs, initial_post_data: Dict[str, Any]) -> Tuple[List[str], ArgPairs]:
     remaining_argpairs: ArgPairs = []
-    post_data: Dict[str, Any] = {}
+    post_data = deepcopy(initial_post_data)
+    passed_array_params: Set[str] = set()  # needed to correctly overwrite params in the initial_post_data
 
     for param, arg_value in param_args:
         if param.param_type == ParamType.json_body:
@@ -1240,6 +1281,11 @@ def format_post_data(param_args: ArgPairs) -> Tuple[List[str], ArgPairs]:
             if param.type_.is_array:
                 if arg_name not in post_data:
                     post_data[arg_name] = [arg_value]
+                    passed_array_params.add(arg_name)
+                elif arg_name not in passed_array_params:
+                    # this means it was in the initial_post_data, and we want to overwrite it
+                    post_data[arg_name] = [arg_value]
+                    passed_array_params.add(arg_name)
                 else:
                     post_data[arg_name].append(arg_value)
             else:
@@ -1339,12 +1385,20 @@ REQUIRES_ARG = ArgParserArg(
     )
 )
 
+BODY_JSON_ARG = ArgParserArg(
+    ['-b', '--body-json', '--body'],
+    dict(type=json.loads, default={},
+         help='Base json object to send in the body.  Required body params are still required unless -R option passed.'
+              '  Useful for dealing with incomplete specs.')
+)
+
 GENERIC_OPTIONAL_ARGS = [
     ArgParserArg(['-p', '--print-cmd'], dict(action='store_true', default=False,
                                              help='Print the resulting curl command to standard out')),
     ArgParserArg(['-n', '--no-run'], dict(action='store_false', dest='run_cmd', default=True,
                                           help='Don\'t run the curl command.  Useful with -p')),
-    REQUIRES_ARG
+    REQUIRES_ARG,
+    BODY_JSON_ARG
 ]
 
 

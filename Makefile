@@ -52,7 +52,7 @@ flake8:
 	flake8 curl_arguments_url tests
 
 mypy:
-	mypy . --exclude '^tests/dockerfiles/'
+	mypy .
 
 lint: mypy flake8
 

@@ -109,3 +109,6 @@ ENV/
 
 # I like having a tmp dir to play around in locally
 tmp/
+
+# MacOS
+.DS_Store
