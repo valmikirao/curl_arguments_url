@@ -22,6 +22,10 @@ paths:
             type: string
     post:
       summary: Demo Post Command
+      parameters:
+        - name: field-header
+          description: Header Param
+          in: header
       requestBody:
         content:
           application/json:
