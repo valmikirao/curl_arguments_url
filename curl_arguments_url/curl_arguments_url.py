@@ -9,11 +9,12 @@ import sys
 import textwrap
 from abc import ABC, abstractmethod
 from collections import defaultdict, OrderedDict
+from copy import deepcopy
 from datetime import datetime
 from enum import Enum
 from hashlib import md5
 from typing import Iterable, NamedTuple, Tuple, Sequence, List, Union, Dict, Optional, TypeVar, Generic, \
-    Callable, Any, MutableMapping, cast
+    Callable, Any, MutableMapping, cast, Set
 
 from jsonref import replace_refs as replace_json_refs  # type: ignore
 from openapi_schema_pydantic import OpenAPI, Operation, RequestBody, Schema, Reference, Parameter, PathItem, Server
@@ -820,7 +821,8 @@ class SwaggerRepo:
             self.cache_param_arg_pairs(param_arg_pairs)
 
             headers, param_arg_pairs = format_headers(param_arg_pairs)
-            post_data, param_arg_pairs = format_post_data(param_arg_pairs)
+            initial_post_data: Dict[str, Any] = args.body_json
+            post_data, param_arg_pairs = format_post_data(param_arg_pairs, initial_post_data)
             formatted_url = format_url(url_, param_arg_pairs)
 
             method_: str = method.value
@@ -1230,9 +1232,10 @@ class ArgCache(FileCache[str, List[ParamValue]]):
         return key
 
 
-def format_post_data(param_args: ArgPairs) -> Tuple[List[str], ArgPairs]:
+def format_post_data(param_args: ArgPairs, initial_post_data: Dict[str, Any]) -> Tuple[List[str], ArgPairs]:
     remaining_argpairs: ArgPairs = []
-    post_data: Dict[str, Any] = {}
+    post_data = deepcopy(initial_post_data)
+    passed_array_params: Set[str] = set()  # needed to correctly overwrite params in the initial_post_data
 
     for param, arg_value in param_args:
         if param.param_type == ParamType.json_body:
@@ -1240,6 +1243,11 @@ def format_post_data(param_args: ArgPairs) -> Tuple[List[str], ArgPairs]:
             if param.type_.is_array:
                 if arg_name not in post_data:
                     post_data[arg_name] = [arg_value]
+                    passed_array_params.add(arg_name)
+                elif arg_name not in passed_array_params:
+                    # this means it was in the initial_post_data, and we want to overwrite it
+                    post_data[arg_name] = [arg_value]
+                    passed_array_params.add(arg_name)
                 else:
                     post_data[arg_name].append(arg_value)
             else:
@@ -1339,12 +1347,20 @@ REQUIRES_ARG = ArgParserArg(
     )
 )
 
+BODY_JSON_ARG = ArgParserArg(
+    ['-b', '--body-json', '--body'],
+    dict(type=json.loads, default={},
+         help='Base json object to send in the body.  Required body params are still required unless -R option passed.'
+              '  Useful for dealing with incomplete specs.')
+)
+
 GENERIC_OPTIONAL_ARGS = [
     ArgParserArg(['-p', '--print-cmd'], dict(action='store_true', default=False,
                                              help='Print the resulting curl command to standard out')),
     ArgParserArg(['-n', '--no-run'], dict(action='store_false', dest='run_cmd', default=True,
                                           help='Don\'t run the curl command.  Useful with -p')),
-    REQUIRES_ARG
+    REQUIRES_ARG,
+    BODY_JSON_ARG
 ]
 
 

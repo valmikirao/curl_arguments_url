@@ -75,6 +75,16 @@ ALL_URLS = sorted(serv + path for serv, path in itertools.product(ALL_SERVERS, A
         '{"arg_list": ["one", "two"], "arg_list_int": [1], "arg_nested": {"A": 1, "B": "two"},'
         ' "array_nested": [[1, 2], [3, 4]]}'
     ]),
+    ('fake.com/posting/raw/stuff POST +arg_list one +arg_list two +arg_list_int 1'.split(' ') + [
+        '+arg_nested', '{"A": 1, "B": "two"}', '+array_nested', '[1, 2]', '[3, 4]',
+        '--body', '{"arg_list": ["over", "written"], "arg_nested": {"over": "written"},'
+                  ' "xtra-arg": ["not", "over", "written"]}'
+    ], 'curl -X POST fake.com/posting/raw/stuff'.split(' ') + [
+        '-H', 'Content-Type: application/json',
+        '--data-binary',
+        '{"arg_list": ["one", "two"], "arg_nested": {"A": 1, "B": "two"}, "xtra-arg": ["not", "over", "written"], '
+        '"arg_list_int": [1], "array_nested": [[1, 2], [3, 4]]}'
+    ]),
     ('fake.com/{arg}/in/path/and/body POST +arg:PATH path_value +arg:BODY body_value'.split(' '),
      'curl -X POST fake.com/path_value/in/path/and/body'.split(' ') + [
          '-H', 'Content-Type: application/json',
@@ -187,6 +197,12 @@ ARG_PATH_AND_BODY_COMPLETIONS = [
     CompletionItem(tag='+arg:PATH', description=None),
 ]
 ALL_GENERIC_COMPLETIONS = [
+    CompletionItem(tag='--body', description='Base json object to send in the body.  Required body params are still'
+                                             ' required unless -R option passed.  Useful for dealing with incomplete'
+                                             ' specs.'),
+    CompletionItem(tag='--body-json', description='Base json object to send in the body.  Required body params are'
+                                                  ' still required unless -R option passed.  Useful for dealing with'
+                                                  ' incomplete specs.'),
     CompletionItem(
         tag='--no-requires',
         description="Don't check to see if required parameter values are missing or if values are one of the"
@@ -199,6 +215,9 @@ ALL_GENERIC_COMPLETIONS = [
         description="Don't check to see if required parameter values are missing or if values are one of the"
                     " enumerated values"
     ),
+    CompletionItem(tag='-b', description='Base json object to send in the body.  Required body params are still'
+                                         ' required unless -R option passed.  Useful for dealing with incomplete'
+                                         ' specs.'),
     CompletionItem(tag='-n', description="Don't run the curl command.  Useful with -p"),
     CompletionItem(tag='-p', description='Print the resulting curl command to standard out')
 ]
