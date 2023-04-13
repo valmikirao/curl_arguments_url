@@ -45,17 +45,17 @@ class EnvVariable:
 
 CARL_DIR_ENV = EnvVariable(
     'CARL_DIR', os.path.join(os.environ.get('HOME', '/'), '.carl'),
-    description='Directory which contains files for carl.'
+    description='Directory which contains files for carl. Default: ~/.carl'
 )
 CARL_DIR = CARL_DIR_ENV.get_value()
 OPEN_API_DIR_ENV = EnvVariable(
     'CARL_OPEN_API_DIR', os.path.join(CARL_DIR, 'open_api'),
-    description='Directory containing the OpenApi specifications and Yaml files.'
+    description='Directory containing the OpenApi specifications and Yaml files. Default: $CARL_DIR/open_api'
 )
 OPEN_API_DIR = OPEN_API_DIR_ENV.get_value()
 CACHE_DIR_ENV = EnvVariable(
     'CARL_CACHE_DIR', os.path.join(CARL_DIR, 'cache'),
-    description='Directory containing the cache.'
+    description='Directory containing the cache. Default $CARL_DIR/cache'
 )
 CACHE_DIR = CACHE_DIR_ENV.get_value()
 
@@ -1175,7 +1175,7 @@ def get_command_epilogue() -> str:
     return_str = 'Environment Variables:\n'
     for env_variable in EnvVariable.registry:
         return_str += wrap_text(
-            f"{env_variable.env_name}: {env_variable.description}  Default: {env_variable.default}\n",
+            f"{env_variable.env_name}: {env_variable.description}\n",
             initial_indent=' ' * 4,
             subsequent_indent=' ' * 24
         )

@@ -8,17 +8,148 @@
 
 ![demo](https://raw.githubusercontent.com/valmikirao/curl_arguments_url/master/assets/demo.gif)
 
+Though OpenAPI documented services offer a nice UI to test the endpoints, I couldn't find a good command line tool for
+this.  Here I created something that works nicely with zsh completions.  If you have the OpenAPI spec available, you
+put it in your `~/.carl/open_api`.  Then parameters can be passed as `+{param-name}`, with tab-completions, and then
+these are passed to `curl`
 
 ### Installation
 
 ```shell
 # globally
-$ pipx install 'aws_cloudwatch_insights[cli]'
+% pipx install 'curl_arguments_url'
 # or in a particular virtual env
-$ pip install 'aws_cloudwatch_insights[cli]'
+% pip install 'curl_arguments_url'
+
+# to get the completions to work, add the following to your .zshrc
+eval "$(carl utils zsh-print-script)"
 ```
 
-### Usage
+### Examples
+
+These examples use [tests/resources/open_api/openapi-demo.yml](tests/resources/open_api/openapi-demo.yml)
+
+* Basic GET
+
+```shell
+% carl http://demo.io/v0/entities/\{path-item\} GET +path-item ID +query-item query-this --no-run --print-cmd
+curl -X GET 'http://demo.io/v0/entities/ID?query-item=query-this'
+```
+
+* More complicated POST command
+
+```shell
+% carl http://demo.io/v0/entities/\{path-item\} POST \
+    +path-item ID +field-one value +field-two an array of values \
+    +field-three '{"complex":["sub","value"]}' \
+    +field-header 'Header Param Value' \
+    --no-run --print-cmd \
+    -- --silent # you can get other arguments passed to curl at the end, like this
+# the output wouldn't be this nicely formatted, but so you can see what curl command would be run
+curl -X POST http://demo.io/v0/entities/ID \
+  -H 'field-header: Header Param Value' -H 'Content-Type: application/json' \
+  --data-binary \
+  '{"field-one": "value", "field-two": ["an", "array", "of", "values"], "field-three": {"complex": ["sub", "value"]}}' \
+  --silent
+ ```
+
+* Values are cached for completion by param name.
+
+![demo](https://raw.githubusercontent.com/valmikirao/curl_arguments_url/master/assets/demo-value-completions.gif)
+
+* These cached values can be managed with the `carl utils cached-values` utility:
+
+```shell
+% carl utils cached-values --help
+usage: carl utils cached-values [-h] {params,ls,rm,add} ...
+
+positional arguments:
+  {params,ls,rm,add}
+    params            List all the param names that have values cached
+    ls                List all the values cached for a particular param
+    rm                Remove a value for an param from the cache for completions
+    add               Add one or more values for a param to the cache
+
+options:
+  -h, --help          show this help message and exit
+```
+
+* Help is generated from the OpenAPI spec for your reference
+
+```text
+% carl --help
+usage: carl [-h] {utils,http://demo.io/v0/entities/{path-item},http://demo.io/v0/restricted,http://demo.io/v0/other,http://demo.io/v0/endpoints} ...
+
+A Utility to cleanly take command-line arguments, for an endpoint you have the
+OpenAPI specification for, and convert them into an appropriate curl command.
+Spec files should be in /root/.carl/open_api directory or directory defined by
+env variables (See below)
+
+positional arguments:
+  {utils,http://demo.io/v0/entities/{path-item},http://demo.io/v0/restricted,http://demo.io/v0/other,http://demo.io/v0/endpoints}
+    utils               Utilities
+    http://demo.io/v0/entities/{path-item}
+                        Demo Entity Endpoint
+    http://demo.io/v0/restricted
+                        A Restricted Endpoint
+    http://demo.io/v0/other
+                        Another Endpoint
+    http://demo.io/v0/endpoints
+                        Yet Another Endpoint
+
+options:
+  -h, --help            show this help message and exit
+
+Environment Variables:
+    CARL_DIR: Directory which contains files for carl. Default: ~/.carl
+    CARL_OPEN_API_DIR: Directory containing the OpenApi specifications and
+                        Yaml files. Default: $CARL_DIR/open_api
+    CARL_CACHE_DIR: Directory containing the cache. Default $CARL_DIR/cache
+
+% carl http://demo.io/v0/entities/\{path-item\} POST --help
+usage: carl http://demo.io/v0/entities/{path-item} POST [-h] [-p] [-n] [-R] [-b BODY_JSON] [+field-header FIELD_HEADER] [+field-one FIELD_ONE]
+                                                        [+field-two FIELD_TWO [FIELD_TWO ...]] [+field-three FIELD_THREE] +path-item PATH_ITEM
+                                                        [passed_to_curl ...]
+
+Demo Post Command
+
+positional arguments:
+  passed_to_curl        Extra argument passed to curl, often after "--"
+
+options:
+  -h, --help            show this help message and exit
+  -p, --print-cmd       Print the resulting curl command to standard out
+  -n, --no-run          Don't run the curl command. Useful with -p
+  -R, --no-requires     Don't check to see if required parameter values are missing or if values are one of the enumerated values
+  -b BODY_JSON, --body-json BODY_JSON, --body BODY_JSON
+                        Base json object to send in the body. Required body params are still required unless -R option passed. Useful for dealing with incomplete specs.
+  +field-header FIELD_HEADER
+                        Header Param
+  +field-one FIELD_ONE  Demo Body String Field
+  +field-two FIELD_TWO [FIELD_TWO ...]
+                        Demo Body Array Field
+  +field-three FIELD_THREE
+                        Demo Body Complex Field
+  +path-item PATH_ITEM
+```
+
+* Generic Optional Args:
+
+```text
+  -p, --print-cmd       Print the resulting curl command to standard out
+  -n, --no-run          Don't run the curl command. Useful with -p
+  -R, --no-requires     Don't check to see if required parameter values are missing or if values are one of the enumerated values
+```
+
+* Relevant Environment Variables
+
+```text
+    CARL_DIR: Directory which contains files for carl. Default: ~/.carl
+    CARL_OPEN_API_DIR: Directory containing the OpenApi specifications and
+                        Yaml files. Default: $CARL_DIR/open_api
+    CARL_CACHE_DIR: Directory containing the cache. Default $CARL_DIR/cache
+```
+
 
 ## Development
 
