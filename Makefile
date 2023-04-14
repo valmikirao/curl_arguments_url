@@ -1,4 +1,4 @@
-.PHONY: clean clean-test clean-pyc clean-build help flake8 mypy check publish
+.PHONY: clean clean-test clean-pyc clean-build help flake8 mypy check
 .DEFAULT_GOAL := help
 
 define BROWSER_PYSCRIPT
