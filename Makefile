@@ -63,9 +63,6 @@ test: ## run tests quickly with the default Python
 test-all: ## run tests on every Python version with tox
 	tox
 
-publish: dist ## package and upload a publish
-	twine upload --username __token__ --password "$(PYPI_PASSWORD)" dist/*
-
 dist: clean ## builds source and wheel package
 	python setup.py sdist
 	python setup.py bdist_wheel

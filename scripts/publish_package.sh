@@ -24,4 +24,9 @@ if [[ "$GITHUB_RELEASE_VERSION" !=  "$VERSION" ]]; then
 fi
 
 pip install -r requirements_publish.txt
-make publish
+
+
+python setup.py sdist
+python setup.py bdist_wheel
+ls -l dist
+twine upload --username __token__ --password "$PYPI_PASSWORD" dist/*
