@@ -20,5 +20,5 @@ def test_version(content_root: str):
     changelog_file = os.path.join(content_root, 'CHANGELOG.md')
     with open(changelog_file, 'r') as f:
         changelog_str = f.read()
-    assert re.search(r'^' + re.escape(f"**{__version__}**"), changelog_str), f"Version {__version__} not referenced" \
-                                                                             f" in CHANGELOG.md"
+    assert re.search(r'^' + re.escape(f"**{__version__}**"), changelog_str, flags=re.MULTILINE), \
+        f"Version {__version__} not referenced in CHANGELOG.md"
