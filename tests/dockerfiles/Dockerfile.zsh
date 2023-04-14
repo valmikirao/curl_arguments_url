@@ -7,9 +7,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y zsh curl jq git && \
     sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
 
-COPY setup.py ./
-COPY curl_arguments_url/__init__.py ./curl_arguments_url/
-
+COPY setup.py version.txt ./
 RUN pip --no-cache install -e .
 
 COPY . /app

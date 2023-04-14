@@ -1,4 +1,4 @@
-.PHONY: clean clean-test clean-pyc clean-build help flake8 mypy check
+.PHONY: clean clean-test clean-pyc clean-build help flake8 mypy check publish
 .DEFAULT_GOAL := help
 
 define BROWSER_PYSCRIPT
@@ -49,7 +49,7 @@ clean-test: ## remove test and coverage artifacts
 
 
 flake8:
-	flake8 curl_arguments_url tests
+	flake8
 
 mypy:
 	mypy .
@@ -63,7 +63,7 @@ test: ## run tests quickly with the default Python
 test-all: ## run tests on every Python version with tox
 	tox
 
-release: dist ## package and upload a release
+publish: dist ## package and upload a publish
 	twine upload dist/*
 
 dist: clean ## builds source and wheel package

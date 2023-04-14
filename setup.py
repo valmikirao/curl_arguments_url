@@ -4,7 +4,6 @@
 import os.path
 
 from setuptools import setup, find_packages
-from curl_arguments_url import __version__ as version
 
 
 def _read_file(file: str) -> str:
@@ -17,6 +16,7 @@ def _read_file(file: str) -> str:
 
 
 readme = _read_file('README.md')
+version = _read_file('version.txt')
 
 requirements = [
     'PyYAML>=6.0.0,<7.0.0',
