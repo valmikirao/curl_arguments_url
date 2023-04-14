@@ -13,7 +13,7 @@ ZSH_SCRIPT = """\
 autoload -U compinit
 compinit
 
-_carl_test_completion() {
+_carl() {
     local -a completions
     local -a completions_with_descriptions
     local -a response
@@ -26,7 +26,7 @@ _carl_test_completion() {
     fi
 }
 
-compdef _carl_test_completion carl;
+compdef _carl carl;
 """
 
 

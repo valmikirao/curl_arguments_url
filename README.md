@@ -11,7 +11,10 @@
 Though OpenAPI documented services offer a nice UI to test the endpoints, I couldn't find a good command line tool for
 this.  Here I created something that works nicely with zsh completions.  If you have the OpenAPI spec available, you
 put it in your `~/.carl/open_api`.  Then parameters can be passed as `+{param-name}`, with tab-completions, and then
-these are passed to `curl`
+these are passed to `curl`.
+
+There is no way that this covers all the cases for the OpenAPI spec, but it hopefully covers the vast majority people
+of cases people actually encounter.
 
 ### Installation
 
@@ -171,7 +174,18 @@ $ make test-all
 
 No CI/CD or coverage yet
 
-## To Do
+## To Do/Future Features
+
+* A `--query` option for adding query parameters directly
+* Some sort of hook infrastructure, so you could do things like have custom-completions for certain parameters or
+    automatically add a particular env variable as an auth header
+* Support file uploading and downloading
+* Utilize the authorization part of the OpenAPI spec
+* Better support for nested json objects in the body, so that `+param.sub-param value` would set
+    `{"param"{"sub-param":"value"}}`
+* Maybe support older versions of Swagger/OpenApi
+* Speaking of which, in the code I sometimes use the term "swagger" and sometimes "open_api".  I should make this
+    consistent.
 
 ## Credits
 

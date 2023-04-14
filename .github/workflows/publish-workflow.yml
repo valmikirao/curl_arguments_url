@@ -1,46 +1,24 @@
-name: Run Tests
-run-name: ${{ github.actor }} pushed a change 🚀
-on: [push]
+name: Publish Python Package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
 
 jobs:
-  build:
-
+  deploy:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ["3.7", "3.8", "3.9", "3.10", "3.11"]
-
+    environment: pypi_publish
     steps:
-      - uses: actions/checkout@v3
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ matrix.python }}
-      - name: Install tox and any other packages
-        run: pip install -r requirements_tox.txt
-      - name: Use Tox Cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            .tox
-            .mypy_cache
-          key: tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt') }}
-          restore-keys: |
-              tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt') }}
-              tox-${{ matrix.python }}-
-      - name: Run Tox
-        # Run tox using the version of Python in `PATH`
-        run: ./scripts/tox_github.sh "${{ matrix.python }}"
-  results:
-      if: ${{ always() }}
-      runs-on: ubuntu-latest
-      name: Final Results
-      needs: [build]
-      steps:
-          - run: |
-              result="${{ needs.build.result }}"
-              if [[ $result == "success"  ]]; then
-                exit 0
-              else
-                exit 1
-              fi
+    - uses: actions/checkout@v3
+    - name: Set up Python
+      uses: actions/setup-python@v3
+      with:
+        python-version: '3.11'
+    - name: Publish
+      run: ./scripts/publish_package.sh
+      env:
+          PYPI_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+          GITHUB_RELEASE_VERSION: ${{ github.ref_name }}
