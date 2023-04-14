@@ -26,6 +26,9 @@ of cases people actually encounter.
 
 # to get the completions to work, add the following to your .zshrc
 eval "$(carl utils zsh-print-script)"
+
+# And copy the OpenAPI spec into ~/.carl/open_api to get the completions and curl-building working
+% cp open_api-spec.yml ~/.carl/open_api
 ```
 
 ### Examples
@@ -108,7 +111,10 @@ Environment Variables:
     CARL_OPEN_API_DIR: Directory containing the OpenApi specifications and
                         Yaml files. Default: $CARL_DIR/open_api
     CARL_CACHE_DIR: Directory containing the cache. Default $CARL_DIR/cache
+```
 
+For a specific endpoint:
+```text
 % carl http://demo.io/v0/entities/\{path-item\} POST --help
 usage: carl http://demo.io/v0/entities/{path-item} POST [-h] [-p] [-n] [-R] [-b BODY_JSON] [+field-header FIELD_HEADER] [+field-one FIELD_ONE]
                                                         [+field-two FIELD_TWO [FIELD_TWO ...]] [+field-three FIELD_THREE] +path-item PATH_ITEM
@@ -142,6 +148,8 @@ options:
   -p, --print-cmd       Print the resulting curl command to standard out
   -n, --no-run          Don't run the curl command. Useful with -p
   -R, --no-requires     Don't check to see if required parameter values are missing or if values are one of the enumerated values
+  -b BODY_JSON, --body-json BODY_JSON, --body BODY_JSON
+                        Base json object to send in the body. Required body params are still required unless -R option passed. Useful for dealing with incomplete specs.
 ```
 
 * Relevant Environment Variables
@@ -186,6 +194,10 @@ No CI/CD or coverage yet
 * Maybe support older versions of Swagger/OpenApi
 * Speaking of which, in the code I sometimes use the term "swagger" and sometimes "open_api".  I should make this
     consistent.
+* Support bash and fish.  With how I implemented this, I thought it would be easy to implement bash.  But the way bash
+    parses and escapes arguments passed to the completion function made it surprisingly challenging.  The
+    `bash-completion` branch has my so-far attempts to deal with these issues.  It might be close to done, or there
+    might be a slew of other issues I haven't realized yet.
 
 ## Credits
 
