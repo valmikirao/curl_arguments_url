@@ -21,7 +21,7 @@ version = _read_file('version.txt')
 requirements = [
     'PyYAML>=6.0.0,<7.0.0',
     'jsonref>=1.1.0,<2.0.0',
-    'openapi-schema-pydantic>=1.2.4,<2.0.0'
+    'pydantic>=1.10.7,<2.0.0'
 ]
 
 setup(
