@@ -22,11 +22,7 @@ class Server(BaseModel):
     variables: Optional[Dict[str, ServerVariable]] = None
 
 
-MAX_SCHEMA_DEPTH = 2
-
-
 class Schema(BaseModel):
-    depth: int = 0
     description: Optional[str] = None
     # maybe convert `type` to an enum at some point
     type: Optional[Union[str, List[str]]] = None
@@ -34,20 +30,6 @@ class Schema(BaseModel):
     required: Optional[List[str]] = None
     properties: Optional[Dict[str, 'Schema']] = None
     enum: Optional[List[Any]] = Field(default=None, min_items=1)
-
-    @validator('items', pre=True)
-    def validate_items(cls, v, values):
-        next_depth = values.get('depth', 0) + 1
-        if next_depth > MAX_SCHEMA_DEPTH:
-            print('!!!')
-            return {'depth': next_depth}
-        elif isinstance(v, dict):
-            assert 'depth' not in v, 'Why would you do this?'
-            return {**v, 'depth': next_depth}
-        elif v is None:
-            return None
-        else:
-            raise NotImplementedError('Not parsing anything else yet')
 
     @validator('required', pre=True)
     def validate_required(cls, v):
@@ -59,27 +41,21 @@ class Schema(BaseModel):
 
     @validator('properties', pre=True)
     def validate_properties(cls, v, values):
-        next_depth = values.get('depth', 0) + 1
-        if next_depth > MAX_SCHEMA_DEPTH:
-            print('!!!')
-            return {k: {'depth': next_depth} for k in v.keys()}
-        elif isinstance(v, dict):
-            return_v = {}
+        if isinstance(v, dict):
             for prop, schema in v.items():
                 if isinstance(schema, dict):
                     if isinstance(schema.get('required'), bool) and schema['required']:
                         if values.get('required') is None:
                             values['required'] = []
                         values['required'].append(prop)
-                    assert 'depth' not in schema, 'Why would you do this?'
-                    return_v[prop] = {**schema, 'depth': next_depth}
                 else:
                     raise NotImplementedError('Not parsing anything else yet')
-            return return_v
+            return v
         elif v is None:
             return None
         else:
             raise AssertionError('Must be a dict or None')
+
 
 class Parameter(BaseModel):
     name: str
@@ -118,7 +94,6 @@ class PathItem(BaseModel):
     head: Optional[Operation] = None
     patch: Optional[Operation] = None
     trace: Optional[Operation] = None
-
 
 
 class OpenApiLazy(BaseModel):

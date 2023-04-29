@@ -406,7 +406,6 @@ class ParamsWithCachedValuesCache(FileCache[None, List[str]]):
     def thaw(self, frozen_value: io.TextIOWrapper) -> List[str]:
         return json.loads(frozen_value.read())
 
-
     def freeze_key(self, key: None) -> str:
         return 'PARAMS-WITH-CACHED-VALUES-KEY'
 
@@ -773,7 +772,9 @@ class SwaggerRepo:
         for json_mime_type in ('application/json', 'json'):
             if json_mime_type in request_body.content:
                 schema = request_body.content[json_mime_type].media_type_schema
-                if isinstance(schema, open_api.Schema) and schema.type == SpecialSwaggerTypeStrs.object and schema.properties:
+                if isinstance(schema, open_api.Schema) \
+                        and schema.type == SpecialSwaggerTypeStrs.object \
+                        and schema.properties:
                     if schema.required is not None:
                         required_props = set(schema.required)
                     else:
@@ -910,6 +911,7 @@ class SwaggerRepo:
             return ['curl', '-X', method_, formatted_url, *headers, *post_data, *remaining], generic_args
         else:
             raise NotImplementedError()
+
     def cache_param_arg_pairs(self, param_args: ArgPairs) -> None:
         param_names: List[str] = []
         for param, value in param_args:
