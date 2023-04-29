@@ -41,6 +41,10 @@ class Schema(BaseModel):
 
     @validator('properties', pre=True)
     def validate_properties(cls, v, values):
+        """
+        As far as I can tell, "required" should never be a bool, but some schemas (I'm looking at you,
+        athenahealth!) do this
+        """
         if isinstance(v, dict):
             for prop, schema in v.items():
                 if isinstance(schema, dict):
