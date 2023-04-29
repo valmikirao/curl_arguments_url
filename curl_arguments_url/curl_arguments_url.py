@@ -26,6 +26,7 @@ import yaml.parser
 
 from curl_arguments_url.models import open_api
 from curl_arguments_url.models.methods import Method
+from curl_arguments_url.yaml import load_yaml
 
 REMAINING_ARG = 'passed_to_curl'
 
@@ -669,7 +670,7 @@ class SwaggerRepo:
                 with open(file, 'r') as fh:
                     loaded: Optional[Dict[str, Any]]
                     try:
-                        loaded = yaml.safe_load(fh)
+                        loaded = load_yaml(fh)
                     except yaml.parser.ParserError as e:
                         if warnings:
                             print('WARNING: ' + str(e), file=sys.stderr)

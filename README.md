@@ -29,6 +29,12 @@ eval "$(carl utils zsh-print-script)"
 
 # And copy the OpenAPI spec into ~/.carl/open_api to get the completions and curl-building working
 % cp open_api-spec.yml ~/.carl/open_api
+
+# if parsing of the open_api files is too slow for you, you can try installing the ryaml (Rust Yaml) extension. I
+# didn't include this by default because I'm afraid it might not install correctly on certain systems, but it's much
+# faster
+% pipx install 'curl_arguments_url[ryaml]'
+ 
 ```
 
 ### Examples
@@ -161,6 +167,11 @@ options:
     CARL_CACHE_DIR: Directory containing the cache. Default $CARL_DIR/cache
 ```
 
+### Hints for finding OpenAPI specs
+
+The spec you're interested in might be on https://app.swaggerhub.com/.  Also, sometimes the doc/sandbox page, for an
+api, which gives you a gui for interacting with the api, loads the swagger spec in the background.  You can see this
+if you open the developer tools in Chrome under Network
 
 ## Development
 
