@@ -6,7 +6,7 @@ from curl_arguments_url.models.methods import METHODS
 
 
 class CarlBaseModel(BaseModel):
-    class Config(BaseModel.Config):
+    class Config:
         allow_population_by_field_name = True
 
 
