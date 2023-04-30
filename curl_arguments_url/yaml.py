@@ -11,7 +11,7 @@ class LoadYamlFunc(Protocol):
 load_yaml: LoadYamlFunc
 
 try:
-    import ryaml  # type: ignore
+    import ryaml
 
     def load_yaml(fh):
         return ryaml.loads(fh.read())
