@@ -4,7 +4,7 @@ set -ex
 
 PY="$1"
 PY="py${PY/./}" # 3.7 -> py37
-TOX_ENVS="${PY}"
+TOX_ENVS="plain-${PY},ryaml-${PY}"
 if [[ "$PY" == py311 ]]; then
     TOX_ENVS="${TOX_ENVS},lint"
 fi

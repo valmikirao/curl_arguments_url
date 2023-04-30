@@ -21,7 +21,11 @@ version = _read_file('version.txt')
 requirements = [
     'PyYAML>=6.0.0,<7.0.0',
     'jsonref>=1.1.0,<2.0.0',
-    'openapi-schema-pydantic>=1.2.4,<2.0.0'
+    'pydantic>=1.10.7,<2.0.0'
+]
+
+ryaml_requirements = [
+    'ryaml>=0.4.0,<1.0.0'
 ]
 
 setup(
@@ -46,6 +50,9 @@ setup(
         ],
     },
     install_requires=requirements,
+    extras_require={
+        'ryaml': ryaml_requirements
+    },
     license="Apache Software License 2.0",
     long_description=readme,
     long_description_content_type='text/markdown',
