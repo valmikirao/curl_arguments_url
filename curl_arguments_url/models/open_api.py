@@ -5,24 +5,29 @@ from pydantic import BaseModel, ValidationError, Field, validator
 from curl_arguments_url.models.methods import METHODS
 
 
-class Info(BaseModel):
+class CarlBaseModel(BaseModel):
+    class Config(BaseModel.Config):
+        allow_population_by_field_name = True
+
+
+class Info(CarlBaseModel):
     title: str = ''
     summary: Optional[str] = None
     description: Optional[str] = None
 
 
-class ServerVariable(BaseModel):
+class ServerVariable(CarlBaseModel):
     enum: Optional[List[str]] = None
     description: Optional[str] = None
     default: Optional[str] = None
 
 
-class Server(BaseModel):
+class Server(CarlBaseModel):
     url: str
     variables: Optional[Dict[str, ServerVariable]] = None
 
 
-class Schema(BaseModel):
+class Schema(CarlBaseModel):
     description: Optional[str] = None
     # maybe convert `type` to an enum at some point
     type: Optional[Union[str, List[str]]] = None
@@ -42,8 +47,8 @@ class Schema(BaseModel):
     @validator('properties', pre=True)
     def validate_properties(cls, v, values):
         """
-        As far as I can tell, "required" should never be a bool, but some schemas (I'm looking at you,
-        athenahealth!) do this
+        As far as I can tell, "required" should never be a bool, but some schemas (I'm looking at you, athenahealth!)
+        do this.  Assume it means that the property should be in the parent schema's "required" array
         """
         if isinstance(v, dict):
             for prop, schema in v.items():
@@ -61,7 +66,7 @@ class Schema(BaseModel):
             raise AssertionError('Must be a dict or None')
 
 
-class Parameter(BaseModel):
+class Parameter(CarlBaseModel):
     name: str
     description: Optional[str] = None
     param_in: str = Field(alias="in")
@@ -69,15 +74,15 @@ class Parameter(BaseModel):
     param_schema: Optional[Schema] = Field(default=None, alias="schema")
 
 
-class MediaType(BaseModel):
+class MediaType(CarlBaseModel):
     media_type_schema: Optional[Schema] = Field(default=None, alias="schema")
 
 
-class RequestBody(BaseModel):
+class RequestBody(CarlBaseModel):
     content: Dict[str, MediaType]
 
 
-class Operation(BaseModel):
+class Operation(CarlBaseModel):
     summary: Optional[str] = None
     description: Optional[str] = None
     servers: Optional[List[Server]] = None
@@ -85,7 +90,7 @@ class Operation(BaseModel):
     requestBody: Optional[RequestBody] = None
 
 
-class PathItem(BaseModel):
+class PathItem(CarlBaseModel):
     servers: Optional[List[Server]] = None
     description: Optional[str] = None
     summary: Optional[str] = None
@@ -100,9 +105,11 @@ class PathItem(BaseModel):
     trace: Optional[Operation] = None
 
 
-class OpenApiLazy(BaseModel):
-    # This is pretty hacky, I should just recreate my own OpenAPI
-    # model parsing just what I need
+class OpenApiLazy(CarlBaseModel):
+    """
+    This replaces Kuimono's openapi-schema-pydantic, which I used before and still has my appreciation.  This, however,
+    only parses the part of the model we care about, making it more robust
+    """
 
     info: Info
     servers: List[Server] = Field(default_factory=lambda: [Server(url="/")])
