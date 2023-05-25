@@ -21,10 +21,10 @@ jobs:
         with:
           path: |
             .venv
-        key: venv-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt', 'scripts/venv_github.sh', './scripts/setup_dev_env.sh') }}
-        restore-keys: |
-          venv-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt', 'scripts/venv_github.sh', './scripts/setup_dev_env.sh') }}
-          venv-${{ matrix.python }}-
+          key: venv-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt', 'scripts/venv_github.sh', './scripts/setup_dev_env.sh') }}
+          restore-keys: |
+            venv-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt', 'scripts/venv_github.sh', './scripts/setup_dev_env.sh') }}
+            venv-${{ matrix.python }}-
       - name: Install Dev Environment
         run: |
           . ./scripts/venv_github.sh
