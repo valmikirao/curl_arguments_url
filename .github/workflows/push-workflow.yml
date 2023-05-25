@@ -3,7 +3,7 @@ run-name: ${{ github.actor }} pushed a change 🚀
 on: [push]
 
 jobs:
-  build:
+  tests:
 
     runs-on: ubuntu-latest
     strategy:
@@ -16,29 +16,46 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python }}
-      - name: Install tox and any other packages
-        run: pip install -r requirements_tox.txt
+      - &use-dev-cache
+        name: Use Dev Environment Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            .venv
+        key: venv-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt', 'scripts/venv_github.sh', './scripts/setup_dev_env.sh') }}
+        restore-keys: |
+          venv-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt', 'scripts/venv_github.sh', './scripts/setup_dev_env.sh') }}
+          venv-${{ matrix.python }}-
+      - &install-dev
+        name: Install Dev Environment
+        run: |
+          . ./scripts/venv_github.sh
+          # it's not necessary to install the whole dev-environment to run tox.  However, this is a good check
+          # that the dev-setup works in all python versions
+          ./scripts/setup_dev_env.sh
       - name: Use Tox Cache
         uses: actions/cache@v3
         with:
           path: |
             .tox
             .mypy_cache
-          key: tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt') }}
+          key: tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt', 'scripts/venv_github.sh', './scripts/tox_github.sh') }}
           restore-keys: |
-              tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt') }}
+              tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt', 'scripts/venv_github.sh', './scripts/tox_github.sh') }}
               tox-${{ matrix.python }}-
       - name: Run Tox
         # Run tox using the version of Python in `PATH`
-        run: ./scripts/tox_github.sh "${{ matrix.python }}"
+        run: |
+          . ./scripts/venv_github.sh
+          ./scripts/tox_github.sh "${{ matrix.python }}"
   results:
       if: ${{ always() }}
       runs-on: ubuntu-latest
       name: Final Results
-      needs: [build]
+      needs: [tests]
       steps:
           - run: |
-              result="${{ needs.build.result }}"
+              result="${{ needs.tests.result }}"
               if [[ $result == "success"  ]]; then
                 exit 0
               else
