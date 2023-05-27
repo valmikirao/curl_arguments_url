@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Checkout
-        if: ${{ matrix.python != "3.11" }}
+        if: ${{ matrix.python != '3.11' }}
         uses: actions/checkout@v3
       - name: Checkout Full  # needed for pybugsai
-        if: ${{ matrix.python == "3.11" }}
+        if: ${{ matrix.python == '3.11' }}
         uses: actions/checkout@v3
         with:
           fetch-depth: 0  # 0 means full depth
