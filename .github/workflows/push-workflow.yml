@@ -34,7 +34,6 @@ jobs:
           # it's not necessary to install the whole dev-environment to run tox.  However, this is a good check
           # that the dev-setup works in all python versions
           ./scripts/setup_dev_env.sh
-          ./scripts/tox_github.sh "${{ matrix.python }}" --notest  # just set up the tox environment
       - name: Run Tox
         id: tox
         run: |
@@ -52,7 +51,6 @@ jobs:
           key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
       - name: Fail Job If Tox Failed
         run: |
-          echo steps.tox.result="${{ steps.tox.result }}"
           [[ "${{ steps.tox.outputs.result }}" == "success" ]]
       - name: Run PyBugsAI
         if: ${{ matrix.python == '3.11' }}

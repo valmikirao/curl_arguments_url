@@ -21,7 +21,7 @@ runs:
       shell: bash
       run: |
         . ./scripts/venv_github.sh
-        ./script/pybugsai_github.sh
+        ./scripts/pybugsai_github.sh
         echo "result=success" >> "$GITHUB_OUTPUT"
       continue-on-error: true  # want to still save the cache before failing
     - name: Save PyBugsAI Cache
@@ -32,6 +32,5 @@ runs:
     - name: Fail If PyBugsAI Failed
       shell: bash
       run: |
-        echo steps.pybugsai.result="${{ steps.pybugsai.result }}"
         [[ "${{ steps.pybugsai.outputs.result }}" == "success" ]]
 
