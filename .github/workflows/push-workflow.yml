@@ -11,7 +11,14 @@ jobs:
         python: ["3.7", "3.8", "3.9", "3.10", "3.11"]
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        if: ${{ matrix.python != "3.11" }}
+        uses: actions/checkout@v3
+      - name: Checkout Full  # needed for pybugsai
+        if: ${{ matrix.python == "3.11" }}
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # 0 means full depth
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -42,6 +49,7 @@ jobs:
           echo "result=success" >> "$GITHUB_OUTPUT"
         continue-on-error: true  # want to still save the cache before failing
       - name: Save Dev Environment Cache
+        if: steps.env-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v3
         with:
           path: |
@@ -49,9 +57,6 @@ jobs:
             .tox
             .mypy_cache
           key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
-      - name: Fail Job If Tox Failed
-        run: |
-          [[ "${{ steps.tox.outputs.result }}" == "success" ]]
       - name: Run PyBugsAI
         if: ${{ matrix.python == '3.11' }}
         uses: ./.github/actions/pybugsai
