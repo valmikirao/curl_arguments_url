@@ -35,7 +35,7 @@ jobs:
           restore-keys: |
             env-${{ matrix.python }}-
       - name: Install Dev Environment
-        if: steps.env-cache.outputs.cache-hit != 'true'
+        if: always()
         run: |
           . ./scripts/venv_github.sh
           # it's not necessary to install the whole dev-environment to run tox.  However, this is a good check

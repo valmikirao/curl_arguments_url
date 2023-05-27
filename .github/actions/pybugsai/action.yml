@@ -12,7 +12,7 @@ runs:
       shell: bash
       run: |
         # Using `hashFiles('**/*.py')` works but is insanely slow.  This does essentially the same
-        echo "hash=$(git ls-files '*.py' | xargs md5 | md5)" >> "$GITHUB_OUTPUT"
+        echo "hash=$(git ls-files '*.py' | xargs md5sum | md5sum | awk '{print $1}')" >> "$GITHUB_OUTPUT"
     - name: Restore PyBugsAI Cache
       id: pybugsai-cache
       uses: actions/cache/restore@v3
@@ -31,7 +31,7 @@ runs:
           echo cache-key-suffix=SUCCESS >> "$GITHUB_OUTPUT"
           echo "result=success" >> "$GITHUB_OUTPUT"
         else
-          echo cache-key-suffix="$(find .pybugsai/cache -type f | xargs md5 | md5)" >> "$GITHUB_OUTPUT"
+          echo cache-key-suffix="$(find .pybugsai/cache -type f | xargs md5sum | md5sum | awk '{print $1}')" >> "$GITHUB_OUTPUT"
         fi
 
       env:
@@ -39,7 +39,7 @@ runs:
 
       continue-on-error: true  # want to still save the cache before failing
     - name: Save PyBugsAI Cache
-      if: steps.env-cache.outputs.cache-hit != 'true'
+      if: always()
       uses: actions/cache/save@v3
       with:
         path: .pybugsai
