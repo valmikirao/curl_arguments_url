@@ -43,7 +43,7 @@ runs:
       uses: actions/cache/save@v3
       with:
         path: .pybugsai
-        key: pybugsai-${{ steps.pybugsai-cache.outputs.hash }}-${{ steps.pybugsai.outputs.cache-key-suffix }}
+        key: pybugsai-${{ steps.py-files-hash.outputs.hash }}-${{ steps.pybugsai.outputs.cache-key-suffix }}
     - name: Fail If PyBugsAI Failed
       shell: bash
       run: |

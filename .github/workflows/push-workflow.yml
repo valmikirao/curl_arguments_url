@@ -35,7 +35,7 @@ jobs:
           restore-keys: |
             env-${{ matrix.python }}-
       - name: Install Dev Environment
-        if: always()
+        if: steps.env-cache.outputs.cache-hit != 'true'
         run: |
           . ./scripts/venv_github.sh
           # it's not necessary to install the whole dev-environment to run tox.  However, this is a good check
@@ -49,7 +49,7 @@ jobs:
           echo "result=success" >> "$GITHUB_OUTPUT"
         continue-on-error: true  # want to still save the cache before failing
       - name: Save Dev Environment Cache
-        if: steps.env-cache.outputs.cache-hit != 'true'
+        if: always()
         uses: actions/cache/save@v3
         with:
           path: |
