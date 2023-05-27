@@ -24,7 +24,7 @@ jobs:
             .venv
             .tox
             .mypy_cache
-          key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt' }}
+          key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
           restore-keys: |
             env-${{ matrix.python }}-
       - name: Install Dev Environment
@@ -49,7 +49,7 @@ jobs:
             .venv
             .tox
             .mypy_cache
-          key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt' }}
+          key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
       - name: Fail Job If Tox Failed
         run: |
           echo steps.tox.result="${{ steps.tox.result }}"
