@@ -17,35 +17,47 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - name: Use Dev Environment Cache
-        uses: actions/cache@v3
+        id: env-cache
+        uses: actions/cache/restore@v3
         with:
           path: |
             .venv
-          key: venv-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt', 'scripts/venv_github.sh', './scripts/setup_dev_env.sh') }}
+            .tox
+            .mypy_cache
+          key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt' }}
           restore-keys: |
-            venv-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt', 'scripts/venv_github.sh', './scripts/setup_dev_env.sh') }}
-            venv-${{ matrix.python }}-
+            env-${{ matrix.python }}-
       - name: Install Dev Environment
+        if: steps.env-cache.outputs.cache-hit != 'true'
         run: |
           . ./scripts/venv_github.sh
           # it's not necessary to install the whole dev-environment to run tox.  However, this is a good check
           # that the dev-setup works in all python versions
           ./scripts/setup_dev_env.sh
-      - name: Use Tox Cache
-        uses: actions/cache@v3
-        with:
-          path: |
-            .tox
-            .mypy_cache
-          key: tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt', 'scripts/venv_github.sh', './scripts/tox_github.sh') }}
-          restore-keys: |
-              tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt', 'scripts/venv_github.sh', './scripts/tox_github.sh') }}
-              tox-${{ matrix.python }}-
+          ./scripts/tox_github.sh "${{ matrix.python }}" --notest  # just set up the tox environment
       - name: Run Tox
-        # Run tox using the version of Python in `PATH`
+        id: tox
         run: |
           . ./scripts/venv_github.sh
           ./scripts/tox_github.sh "${{ matrix.python }}"
+          echo "result=success" >> "$GITHUB_OUTPUT"
+        continue-on-error: true  # want to still save the cache before failing
+      - name: Save Dev Environment Cache
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            .venv
+            .tox
+            .mypy_cache
+          key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt' }}
+      - name: Fail Job If Tox Failed
+        run: |
+          echo steps.tox.result="${{ steps.tox.result }}"
+          [[ "${{ steps.tox.outputs.result }}" == "success" ]]
+      - name: Run PyBugsAI
+        if: ${{ matrix.python == '3.11' }}
+        uses: ./.github/actions/pybugsai
+
   results:
       if: ${{ always() }}
       runs-on: ubuntu-latest
@@ -53,9 +65,4 @@ jobs:
       needs: [tests]
       steps:
           - run: |
-              result="${{ needs.tests.result }}"
-              if [[ $result == "success"  ]]; then
-                exit 0
-              else
-                exit 1
-              fi
+              [[ "${{ needs.tests.result }}" == "success" ]]

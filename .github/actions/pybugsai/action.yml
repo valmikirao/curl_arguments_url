@@ -1,0 +1,37 @@
+name: PyBugsAI
+description: Runs PyBugsAI and Caches Its Data
+runs:
+  using: composite
+  steps:
+    - name: Get Python Files Hash
+      id: py-files-hash
+      shell: bash
+      run: |
+        # Using `hashFiles('**/*.py')` works but is insanely slow.  This does essentially the same
+        echo "hash=$(git ls-files '*.py' | xargs md5 | md5)" >> "$GITHUB_OUTPUT"
+    - name: Restore PyBugsAI Cache
+      uses: actions/cache/restore@v3
+      with:
+        path: .pybugsai
+        key: pybugsai-${{ steps.py-files-hash.outputs.hash }}
+        restore-keys: |
+          pybugsai-
+    - name: Run PyBugsAI
+      id: pybugsai
+      shell: bash
+      run: |
+        . ./scripts/venv_github.sh
+        ./script/pybugsai_github.sh
+        echo "result=success" >> "$GITHUB_OUTPUT"
+      continue-on-error: true  # want to still save the cache before failing
+    - name: Save PyBugsAI Cache
+      uses: actions/cache/save@v3
+      with:
+        path: .pybugsai
+        key: pybugsai-${{ steps.py-files-hash.outputs.hash }}
+    - name: Fail If PyBugsAI Failed
+      shell: bash
+      run: |
+        echo steps.pybugsai.result="${{ steps.pybugsai.result }}"
+        [[ "${{ steps.pybugsai.outputs.result }}" == "success" ]]
+
