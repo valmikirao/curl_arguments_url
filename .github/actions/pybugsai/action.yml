@@ -1,5 +1,9 @@
 name: PyBugsAI
 description: Runs PyBugsAI and Caches Its Data
+inputs:
+  api-key:
+    description: The OPEN_AI_API_KEY
+    required: true
 runs:
   using: composite
   steps:
@@ -31,7 +35,7 @@ runs:
         fi
 
       env:
-        OPEN_AI_API_KEY: ${{ secrets.OPEN_AI_API_KEY }}
+        OPEN_AI_API_KEY: ${{ inputs.api-key }}
 
       continue-on-error: true  # want to still save the cache before failing
     - name: Save PyBugsAI Cache

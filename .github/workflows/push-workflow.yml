@@ -60,6 +60,8 @@ jobs:
       - name: Run PyBugsAI
         if: ${{ matrix.python == '3.11' }}
         uses: ./.github/actions/pybugsai
+        with:
+          api-key: ${{ secrets.OPEN_AI_API_KEY }}
 
   results:
       if: ${{ always() }}
