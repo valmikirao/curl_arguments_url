@@ -3,5 +3,5 @@
 set -ex
 set -o pipefail
 
-git diff origin/master -- '*.py' |
-  pybugsai --diff-in --cache .pybugsai/cache
+git ls-files '*.py' |
+  pybugsai --in --cache .pybugsai/cache
