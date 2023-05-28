@@ -12,10 +12,10 @@ jobs:
 
     steps:
       - name: Checkout
-        if: ${{ matrix.python != '3.11' }}
+        if: matrix.python != '3.11'
         uses: actions/checkout@v3
       - name: Checkout Full  # needed for pybugsai
-        if: ${{ matrix.python == '3.11' }}
+        if: matrix.python == '3.11'
         uses: actions/checkout@v3
         with:
           fetch-depth: 0  # 0 means full depth
@@ -35,21 +35,23 @@ jobs:
           restore-keys: |
             env-${{ matrix.python }}-
       - name: Install Dev Environment
+        id: install-dev
         if: steps.env-cache.outputs.cache-hit != 'true'
         run: |
           . ./scripts/venv_github.sh
           # it's not necessary to install the whole dev-environment to run tox.  However, this is a good check
           # that the dev-setup works in all python versions
           ./scripts/setup_dev_env.sh
+          echo "result=success" >> "$GITHUB_OUTPUT"
       - name: Run Tox
         id: tox
         run: |
           . ./scripts/venv_github.sh
           ./scripts/tox_github.sh "${{ matrix.python }}"
           echo "result=success" >> "$GITHUB_OUTPUT"
-        continue-on-error: true  # want to still save the cache before failing
       - name: Save Dev Environment Cache
-        if: always()
+        # we want this to save if the installation was successful, even if the tox run wasn't
+        if: steps.env-cache.outputs.cache-hit != 'true' && steps.install-dev.outputs.result == 'success'
         uses: actions/cache/save@v3
         with:
           path: |
@@ -58,7 +60,7 @@ jobs:
             .mypy_cache
           key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
       - name: Run PyBugsAI
-        if: ${{ matrix.python == '3.11' }}
+        if: matrix.python == '3.11'
         uses: ./.github/actions/pybugsai
         with:
           api-key: ${{ secrets.OPEN_AI_API_KEY }}
