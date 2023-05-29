@@ -27,6 +27,7 @@ runs:
       shell: bash
       run: |
         . ./scripts/venv_github.sh
+        ls -aR .pybugsai
         if ./scripts/pybugsai_github.sh; then
           echo "cache-key-suffix=SUCCESS" >> "$GITHUB_OUTPUT"
         else
