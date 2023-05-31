@@ -56,18 +56,15 @@ jobs:
             .tox
             .mypy_cache
           key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
+      - name: Check if Tox Succeeded
+        run: |
+          [[ "${{ steps.tox.outputs.result }}" == success ]]
       - name: Run PyBugsAI
         id: pybugsai
         if: matrix.python == '3.11'
         uses: ./.github/actions/pybugsai
         with:
           api-key: ${{ secrets.OPEN_AI_API_KEY }}
-      - name: Result
-        run: |
-          # Check if tox run was a success and, if this is python3.11, that pybugsai run was a success
-          [[ "${{ steps.tox.outputs.result }}" == success && (
-            "${{ matrix.python }}" != '3.11' || "${{ steps.pybugsai.outputs.result }}" == success
-          ) ]]
 
   results:
       if: ${{ always() }}

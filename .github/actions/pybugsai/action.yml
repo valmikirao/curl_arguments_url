@@ -37,8 +37,7 @@ runs:
         path: .pybugsai
         # caches one failure.  Hopefully, there aren't too many failures with the same '*.py' files
         key: pybugsai-${{ steps.py-files-hash.outputs.hash }}-${{ steps.pybugsai.output.result }}
-outputs:
-  result:
-    description: "Result of the pybugsai run"
-    value:  ${{ steps.pybugsai.outputs.result }}
-
+    - name: Check If Run Suceeded
+      shell: bash
+      run: |
+        [[ "${{ steps.pybugsai.outputs.result }}" == success ]]
