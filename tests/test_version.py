@@ -22,8 +22,3 @@ def test_version(content_root: str):
         changelog_str = f.read()
     assert re.search(r'^' + re.escape(f"**{__version__}**"), changelog_str, flags=re.MULTILINE), \
         f"Version {__version__} not referenced in CHANGELOG.md"
-
-
-def test_fail():
-    import sys
-    assert not sys.version.startswith('3.11.')
