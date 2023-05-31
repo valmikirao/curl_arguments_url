@@ -38,17 +38,14 @@ jobs:
         id: install-dev
         if: steps.env-cache.outputs.cache-hit != 'true'
         run: |
-          . ./scripts/venv_github.sh
           # it's not necessary to install the whole dev-environment to run tox.  However, this is a good check
           # that the dev-setup works in all python versions
-          ./scripts/setup_dev_env.sh
-          echo "result=success" >> "$GITHUB_OUTPUT"
+          ./scripts/github_wrapper.sh ./scripts/setup_dev_env.sh
       - name: Run Tox
         id: tox
         run: |
-          . ./scripts/venv_github.sh
-          ./scripts/tox_github.sh "${{ matrix.python }}"
-          echo "result=success" >> "$GITHUB_OUTPUT"
+          ./scripts/github_wrapper.sh ./scripts/tox_github.sh "${{ matrix.python }}"
+        continue-on-error: true
       - name: Save Dev Environment Cache
         # we want this to save if the installation was successful, even if the tox run wasn't
         if: steps.env-cache.outputs.cache-hit != 'true' && steps.install-dev.outputs.result == 'success'
@@ -60,10 +57,17 @@ jobs:
             .mypy_cache
           key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
       - name: Run PyBugsAI
+        id: pybugsai
         if: matrix.python == '3.11'
         uses: ./.github/actions/pybugsai
         with:
           api-key: ${{ secrets.OPEN_AI_API_KEY }}
+      - name: Result
+        run: |
+          # Check if tox run was a success and, if this is python3.11, that pybugsai run was a success
+          [[ "${{ steps.tox.outputs.result }}" == success && (
+            "${{ matrix.python }}" != '3.11' || "${{ steps.pybugsai.outputs.result }}" == success
+          ) ]]
 
   results:
       if: ${{ always() }}

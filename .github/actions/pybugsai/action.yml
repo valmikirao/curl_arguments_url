@@ -18,7 +18,7 @@ runs:
       uses: actions/cache/restore@v3
       with:
         path: .pybugsai
-        key: pybugsai-${{ steps.py-files-hash.outputs.hash }}-SUCCESS
+        key: pybugsai-${{ steps.py-files-hash.outputs.hash }}-success
         restore-keys: |
           pybugsai-${{ steps.py-files-hash.outputs.hash }}-
           pybugsai-
@@ -26,20 +26,19 @@ runs:
       id: pybugsai
       shell: bash
       run: |
-        . ./scripts/venv_github.sh
-        if ./scripts/pybugsai_github.sh; then
-          echo "cache-key-suffix=SUCCESS" >> "$GITHUB_OUTPUT"
-        else
-          echo "cache-key-suffix=FAIL" >> "$GITHUB_OUTPUT"
-          exit 1
-        fi
+        ./scripts/github_wrapper.sh ./scripts/pybugsai_github.sh
       env:
         OPEN_AI_API_KEY: ${{ inputs.api-key }}
+      continue-on-error: true
     - name: Save PyBugsAI Cache
       if: steps.pybugsai-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@v3
       with:
         path: .pybugsai
         # caches one failure.  Hopefully, there aren't too many failures with the same '*.py' files
-        key: pybugsai-${{ steps.py-files-hash.outputs.hash }}-${{ steps.pybugsai.output.cache-key-suffix }}
+        key: pybugsai-${{ steps.py-files-hash.outputs.hash }}-${{ steps.pybugsai.output.result }}
+outputs:
+  result:
+    description: "Result of the pybugsai run"
+    value:  ${{ steps.pybugsai.outputs.result }}
 
