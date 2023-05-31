@@ -26,4 +26,4 @@ def test_version(content_root: str):
 
 def test_fail():
     import sys
-    assert not sys.version.startswith('3.9.')
+    assert not sys.version.startswith('3.11.')
