@@ -112,3 +112,7 @@ tmp/
 
 # MacOS
 .DS_Store
+
+# local caching of the script
+.pybugsai
+

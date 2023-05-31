@@ -9,3 +9,7 @@
 No longer uses openapi-schema-pydantic, so should be more forgiving of parts of the schema we don't care about.  Does
 lazy_loading of each path when parsing schema (was running into out-of-memory errors).  More efficient use of caches
 so it can deal with extra-long lists of paths better
+
+**0.1.4** - Add PyBugsOpenAI to CI/CD
+
+Also, make CI/CD caching smarter

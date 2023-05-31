@@ -72,7 +72,7 @@ install: clean ## install the package to the active Python's site-packages
 	python setup.py install
 
 develop: clean
-	pip install -e .
-	pip install -r requirements_dev.txt
+	./scripts/setup_dev_env.sh
+
 
 check: lint test

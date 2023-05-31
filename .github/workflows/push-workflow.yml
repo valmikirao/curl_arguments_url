@@ -3,7 +3,7 @@ run-name: ${{ github.actor }} pushed a change 🚀
 on: [push]
 
 jobs:
-  build:
+  tests:
 
     runs-on: ubuntu-latest
     strategy:
@@ -11,36 +11,66 @@ jobs:
         python: ["3.7", "3.8", "3.9", "3.10", "3.11"]
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout
+        if: matrix.python != '3.11'
+        uses: actions/checkout@v3
+      - name: Checkout Full  # needed for pybugsai
+        if: matrix.python == '3.11'
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # 0 means full depth
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python }}
-      - name: Install tox and any other packages
-        run: pip install -r requirements_tox.txt
-      - name: Use Tox Cache
-        uses: actions/cache@v3
+      - name: Use Dev Environment Cache
+        id: env-cache
+        uses: actions/cache/restore@v3
         with:
           path: |
+            .venv
             .tox
             .mypy_cache
-          key: tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt') }}
+          key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
           restore-keys: |
-              tox-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_test.txt') }}
-              tox-${{ matrix.python }}-
+            env-${{ matrix.python }}-
+      - name: Install Dev Environment
+        id: install-dev
+        if: steps.env-cache.outputs.cache-hit != 'true'
+        run: |
+          # it's not necessary to install the whole dev-environment to run tox.  However, this is a good check
+          # that the dev-setup works in all python versions
+          ./scripts/github_wrapper.sh ./scripts/setup_dev_env.sh
       - name: Run Tox
-        # Run tox using the version of Python in `PATH`
-        run: ./scripts/tox_github.sh "${{ matrix.python }}"
+        id: tox
+        run: |
+          ./scripts/github_wrapper.sh ./scripts/tox_github.sh "${{ matrix.python }}"
+        continue-on-error: true
+      - name: Save Dev Environment Cache
+        # we want this to save if the installation was successful, even if the tox run wasn't
+        if: steps.env-cache.outputs.cache-hit != 'true' && steps.install-dev.outputs.result == 'success'
+        uses: actions/cache/save@v3
+        with:
+          path: |
+            .venv
+            .tox
+            .mypy_cache
+          key: env-${{ matrix.python }}-${{ hashFiles('setup.py', 'requirements_*.txt') }}
+      - name: Check if Tox Succeeded
+        run: |
+          [[ "${{ steps.tox.outputs.result }}" == success ]]
+      - name: Run PyBugsAI
+        id: pybugsai
+        if: matrix.python == '3.11'
+        uses: ./.github/actions/pybugsai
+        with:
+          api-key: ${{ secrets.OPEN_AI_API_KEY }}
+
   results:
       if: ${{ always() }}
       runs-on: ubuntu-latest
       name: Final Results
-      needs: [build]
+      needs: [tests]
       steps:
           - run: |
-              result="${{ needs.build.result }}"
-              if [[ $result == "success"  ]]; then
-                exit 0
-              else
-                exit 1
-              fi
+              [[ "${{ needs.tests.result }}" == "success" ]]
